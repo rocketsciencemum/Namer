@@ -109,10 +109,49 @@ async function openDashboard() {
   }
 }
 
+const DISCIPLINES = {
+  template: { name: "Template only", desc: "Title block, company & revisions — no components.", kinds: [] },
+  civils: { name: "Civils (pit & pipe)", desc: "Rack, pit, conduit, demarcation.", kinds: ["rack", "pit", "conduit", "demarc"] },
+  equipment: { name: "Equipment / optical", desc: "FOBOT, patch, FIST/Apex splice, tray, fibre, connector.", kinds: ["rack", "patch", "splice", "tray", "cable", "connector"] },
+  active: { name: "Active equipment", desc: "Rack, patch, connector (active layer to come).", kinds: ["rack", "patch", "connector"] },
+  blank: { name: "Blank", desc: "Full component palette, nothing preset.", kinds: [] },
+};
+
+function chooseDrawingType() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-ov";
+    const box = document.createElement("div");
+    box.className = "modal-box";
+    box.innerHTML = "<h3>New drawing — pick a type</h3>";
+    for (const [key, d] of Object.entries(DISCIPLINES)) {
+      const b = document.createElement("button");
+      b.className = "modal-choice";
+      b.innerHTML = `<b>${d.name}</b><span>${d.desc}</span>`;
+      b.addEventListener("click", () => { ov.remove(); resolve(key); });
+      box.appendChild(b);
+    }
+    const cancel = document.createElement("button");
+    cancel.className = "ghost small";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { ov.remove(); resolve(null); });
+    box.appendChild(cancel);
+    ov.appendChild(box);
+    ov.addEventListener("click", (e) => { if (e.target === ov) { ov.remove(); resolve(null); } });
+    document.body.appendChild(ov);
+  });
+}
+
 $("new-drawing-btn").addEventListener("click", async () => {
+  const disc = await chooseDrawingType();
+  if (!disc) return;
+  const pl = defaultPayload();
+  const ds = pl.sheets.find((s) => s.type === "drawing");
+  ds.discipline = disc;
+  ds.name = DISCIPLINES[disc].name;
   const { drawing } = await api.post("/api/drawings", {
     title: "Untitled drawing",
-    payload: defaultPayload(),
+    payload: pl,
   });
   openEditor(drawing.id);
 });
@@ -163,6 +202,7 @@ function newDrawingSheet(name, ref) {
     type: "drawing",
     name: name || "Drawing",
     ref: ref || "001",
+    discipline: "blank",
     sheet: "A3",
     orientation: "landscape",
     titleBlock: newTitleBlock(),
@@ -278,6 +318,7 @@ function fillForm() {
   const t = p.titleBlock;
   $("editor-title").textContent = current.title;
   $("f-project").value = current.payload.projectName || "";
+  $("f-discipline").value = p.discipline || "blank";
   $("f-sheet").value = p.sheet;
   $("f-orientation").value = p.orientation;
   $("f-abn").value = t.abn || "";
@@ -484,6 +525,13 @@ $("f-standard").addEventListener("change", () => {
   markDirty();
 });
 
+$("f-discipline").addEventListener("change", () => {
+  dsheet().discipline = $("f-discipline").value;
+  buildPalette();
+  markDirty();
+});
+$("f-allcomp").addEventListener("change", buildPalette);
+
 function updateStdNote() {
   const name = dsheet()?.standard;
   const s = STD[name];
@@ -577,6 +625,52 @@ function validTargets(linkKind, excludeId) {
   return dsheet().components.filter(
     (c) => c.id !== excludeId && linkAllows(linkKind, c.kind)
   );
+}
+
+function autoLinkKind(kA, kB) {
+  if (linkAllows("cable", kA) && linkAllows("cable", kB)) return "cable";
+  if (linkAllows("conduit", kA) && linkAllows("conduit", kB)) return "conduit";
+  return null;
+}
+// On drop, snap a moved component beside the nearest connectable one and
+// create the valid run between them if not already linked.
+function dockAndConnect(cid) {
+  const ds = dsheet();
+  const c = ds.components.find((x) => x.id === cid);
+  if (!c) return false;
+  const pc = compCentre(c);
+  const radius = 30 * sheetScale(ds);
+  let best = null, bestD = Infinity, bestKind = null;
+  for (const t of ds.components) {
+    if (t.id === c.id) continue;
+    const lk = autoLinkKind(c.kind, t.kind);
+    if (!lk) continue;
+    const pt = compCentre(t);
+    const d = Math.hypot(pt.x - pc.x, pt.y - pc.y);
+    if (d < bestD) { bestD = d; best = t; bestKind = lk; }
+  }
+  if (!best || bestD > radius) return false;
+  const exists = ds.links.some(
+    (l) => l.kind === bestKind &&
+      ((l.aId === c.id && l.bId === best.id) || (l.bId === c.id && l.aId === best.id))
+  );
+  // Dock: place c adjacent to the target, centres aligned on the cross axis.
+  const pt = compCentre(best);
+  const gap = 8 * sheetScale(ds);
+  if (Math.abs(pt.x - pc.x) >= Math.abs(pt.y - pc.y)) {
+    c.y = best.y + best.h / 2 - c.h / 2;
+    c.x = pc.x >= pt.x ? best.x + best.w + gap : best.x - gap - c.w;
+  } else {
+    c.x = best.x + best.w / 2 - c.w / 2;
+    c.y = pc.y >= pt.y ? best.y + best.h + gap : best.y - gap - c.h;
+  }
+  if (!exists) {
+    const lk = newLink(bestKind, c.id, best.id);
+    ds.links.push(lk);
+    selectedLid = lk.id;
+    selectedCid = null;
+  }
+  return true;
 }
 
 function nearestValidComponent(linkKind, x, y, excludeId) {
@@ -862,7 +956,11 @@ function applyStandardRef(c) {
 function buildPalette() {
   const pal = $("palette");
   pal.innerHTML = "";
-  for (const kind of ORDER) {
+  const disc = dsheet()?.discipline || "blank";
+  const all = $("f-allcomp")?.checked;
+  const allowed = DISCIPLINES[disc]?.kinds || [];
+  const kinds = all || !allowed.length ? ORDER : ORDER.filter((k) => allowed.includes(k));
+  for (const kind of kinds) {
     const b = document.createElement("button");
     b.textContent = CATALOG[kind].name;
     b.dataset.kind = kind;
@@ -1405,6 +1503,26 @@ function componentNode(c, opts) {
   return g;
 }
 
+function endConn(comp) {
+  const s = curStd();
+  return {
+    conn: comp?.props?.connector || (s && s.connector && s.connector.required) || "SC",
+    pol: comp?.props?.polish || (s && s.connector && s.connector.requiredPolish) || "APC",
+  };
+}
+function connGlyph(parent, x, y, ux, uy, conn, pol, sc) {
+  const ang = (Math.atan2(uy, ux) * 180) / Math.PI;
+  const grp = el("g", { transform: `translate(${x} ${y}) rotate(${ang})` });
+  const col = pol === "APC" ? "#1e8b3a" : "#1f4ed8";
+  grp.appendChild(el("rect", { x: -2.4 * sc, y: -1.6 * sc, width: 3 * sc, height: 3.2 * sc, fill: "#fff", stroke: "#000", "stroke-width": 0.3 }));
+  if (pol === "APC")
+    grp.appendChild(el("path", { d: `M${0.6 * sc} ${-1.4 * sc} L${2.4 * sc} 0 L${0.6 * sc} ${1.4 * sc} Z`, fill: col }));
+  else
+    grp.appendChild(el("rect", { x: 0.6 * sc, y: -1.2 * sc, width: 1.8 * sc, height: 2.4 * sc, fill: col }));
+  grp.appendChild(el("text", { x: -0.9 * sc, y: -2.4 * sc, "font-size": 2.1, "text-anchor": "middle", "font-family": "sans-serif", fill: "#333" }, conn));
+  parent.appendChild(grp);
+}
+
 function linkNode(lk, opts) {
   const a = compById(lk.aId);
   const b = compById(lk.bId);
@@ -1418,6 +1536,15 @@ function linkNode(lk, opts) {
     g.appendChild(el("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: colour, "stroke-width": sel ? 1.4 : 1.1, "stroke-dasharray": "3 2" }));
   } else {
     g.appendChild(el("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: colour, "stroke-width": sel ? 1.0 : 0.6 }));
+    // connector glyphs where the cable meets each endpoint
+    const len = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
+    const ux = (pb.x - pa.x) / len, uy = (pb.y - pa.y) / len;
+    const sc = 0.9 * sheetScale(dsheet());
+    const offA = Math.min(a.w, a.h) / 2 + 3;
+    const offB = Math.min(b.w, b.h) / 2 + 3;
+    const ca = endConn(a), cb = endConn(b);
+    connGlyph(g, pa.x + ux * offA, pa.y + uy * offA, ux, uy, ca.conn, ca.pol, sc);
+    connGlyph(g, pb.x - ux * offB, pb.y - uy * offB, -ux, -uy, cb.conn, cb.pol, sc);
   }
   const mx = (pa.x + pb.x) / 2;
   const my = (pa.y + pb.y) / 2;
@@ -2148,7 +2275,16 @@ function attachCanvasHandlers(svg) {
   });
 
   function finish(e) {
-    if (moving) { moving = null; markDirty(); return; }
+    if (moving) {
+      const cid = moving.cid;
+      moving = null;
+      markDirty();
+      if (cid && dockAndConnect(cid)) {
+        renderInspector();
+        render();
+      }
+      return;
+    }
     if (!draft) return;
     const s = draftToShape(draft);
     draft = null;

@@ -159,6 +159,16 @@
               </select>
             </label>
             <p id="std-note" class="tiny muted"></p>
+            <label>Drawing type
+              <select id="f-discipline">
+                <option value="template">Template only</option>
+                <option value="civils">Civils (pit &amp; pipe)</option>
+                <option value="equipment">Equipment / optical</option>
+                <option value="active">Active equipment</option>
+                <option value="blank" selected>Blank</option>
+              </select>
+            </label>
+            <label class="chk"><input id="f-allcomp" type="checkbox" /> Show all components</label>
             <div class="palette" id="palette"></div>
             <p class="muted tiny">Pick a component, then click on the sheet to place it. Defaults follow the selected standard.</p>
           </details>

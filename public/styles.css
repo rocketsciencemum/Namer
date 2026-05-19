@@ -142,6 +142,14 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .label-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
 .label-hint.bad { color: var(--danger); }
 
+.modal-ov { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; width: 420px; max-width: 92vw; }
+.modal-box h3 { margin: 0 0 14px; }
+.modal-choice { display: block; width: 100%; text-align: left; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.modal-choice:hover { border-color: var(--primary); }
+.modal-choice b { display: block; }
+.modal-choice span { color: var(--muted); font-size: 12px; }
+
 #checks-host { max-width: 900px; margin: 0 auto; }
 .check-group { margin-bottom: 20px; }
 .check-group h3 { margin: 0 0 8px; font-size: 15px; }
