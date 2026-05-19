@@ -475,16 +475,27 @@ const CATALOG = {
 };
 const ORDER = ["rack", "patch", "splice", "tray", "pit", "conduit", "cable", "connector", "demarc"];
 
+function sheetScale(p) {
+  // Keep symbols a consistent visual fraction of the sheet regardless of
+  // size (A4..A0). Reference is the A3-landscape frame width (390 mm).
+  const [W] = sheetDims(p);
+  const fw = W - 30;
+  return Math.max(0.7, Math.min(3, fw / 390));
+}
+
 function newComponent(kind, cx, cy) {
   const def = CATALOG[kind];
   const std = STANDARDS[current.payload.standard] || STANDARDS.Generic;
+  const k = sheetScale(current.payload);
+  const w = +(def.w * k).toFixed(1);
+  const h = +(def.h * k).toFixed(1);
   return {
     id: uid(),
     kind,
-    x: cx - def.w / 2,
-    y: cy - def.h / 2,
-    w: def.w,
-    h: def.h,
+    x: cx - w / 2,
+    y: cy - h / 2,
+    w,
+    h,
     label: def.name,
     props: {
       equipment: "",
