@@ -197,7 +197,8 @@ async function openEditor(id) {
   if (!current.payload || !current.payload.titleBlock) current.payload = defaultPayload();
   if (!Array.isArray(current.payload.shapes)) current.payload.shapes = [];
   if (!Array.isArray(current.payload.components)) current.payload.components = [];
-  if (!current.payload.standard) current.payload.standard = "AARNet";
+  if (!["AARNet", "Generic"].includes(current.payload.standard))
+    current.payload.standard = "AARNet";
   selectedId = null;
   selectedCid = null;
   placeKind = null;
