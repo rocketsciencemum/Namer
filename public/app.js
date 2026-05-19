@@ -172,6 +172,7 @@ function newDrawingSheet(name, ref) {
     standard: "AARNet",
     shapes: [],
     components: [],
+    links: [],
   };
 }
 function defaultPayload() {
@@ -199,6 +200,7 @@ function migratePayload(pl) {
       standard: pl.standard || "AARNet",
       shapes: Array.isArray(pl.shapes) ? pl.shapes : [],
       components: Array.isArray(pl.components) ? pl.components : [],
+      links: Array.isArray(pl.links) ? pl.links : [],
     });
   }
   return {
@@ -224,7 +226,10 @@ let dirty = false;
 let tool = "select";
 let selectedId = null;
 let selectedCid = null;
+let selectedLid = null;
 let placeKind = null;
+let linkKind = null;
+let pendingA = null;
 
 const SHEETS = {
   A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
@@ -243,6 +248,7 @@ async function openEditor(id) {
     if (s.type !== "drawing") continue;
     if (!Array.isArray(s.shapes)) s.shapes = [];
     if (!Array.isArray(s.components)) s.components = [];
+    if (!Array.isArray(s.links)) s.links = [];
     if (!["AARNet", "Generic"].includes(s.standard)) s.standard = "AARNet";
   }
   selectedId = null;
@@ -355,7 +361,7 @@ $("logo-clear-btn").addEventListener("click", () => {
   render();
 });
 function updateLogoPreview() {
-  const logo = current?.payload?.titleBlock?.logo;
+  const logo = dsheet()?.titleBlock?.logo;
   $("logo-preview").hidden = !logo;
   if (logo) $("logo-img").src = logo;
 }
@@ -403,8 +409,23 @@ $("add-rev-btn").addEventListener("click", () => {
 
 // ---------- Tools ----------
 function clearPaletteActive() {
-  document.querySelectorAll("#palette button").forEach((x) => x.classList.remove("active"));
+  document.querySelectorAll("#palette button, #link-palette button")
+    .forEach((x) => x.classList.remove("active"));
 }
+document.querySelectorAll("#link-palette button").forEach((b) =>
+  b.addEventListener("click", () => {
+    clearPaletteActive();
+    b.classList.add("active");
+    linkKind = b.dataset.link;
+    placeKind = null;
+    pendingA = null;
+    selectedId = selectedCid = selectedLid = null;
+    setTool("link");
+    $("link-hint").textContent = `Click the FIRST component for the ${linkKind} run…`;
+    renderInspector();
+    render();
+  })
+);
 function setTool(name) {
   tool = name;
   document.querySelectorAll(".tool").forEach((x) =>
@@ -415,9 +436,12 @@ document.querySelectorAll(".tool").forEach((b) =>
   b.addEventListener("click", () => {
     setTool(b.dataset.tool);
     placeKind = null;
+    linkKind = null;
+    pendingA = null;
     clearPaletteActive();
     selectedId = null;
     selectedCid = null;
+    selectedLid = null;
     renderInspector();
     render();
   })
@@ -428,15 +452,21 @@ function deleteSelected() {
     dsheet().shapes = dsheet().shapes.filter((s) => s.id !== selectedId);
     selectedId = null;
   } else if (selectedCid) {
-    dsheet().components = dsheet().components.filter((c) => c.id !== selectedCid);
+    const ds = dsheet();
+    ds.components = ds.components.filter((c) => c.id !== selectedCid);
+    ds.links = ds.links.filter((l) => l.aId !== selectedCid && l.bId !== selectedCid);
     selectedCid = null;
+    renderInspector();
+  } else if (selectedLid) {
+    dsheet().links = dsheet().links.filter((l) => l.id !== selectedLid);
+    selectedLid = null;
     renderInspector();
   } else return;
   markDirty();
   render();
 }
 document.addEventListener("keydown", (e) => {
-  if ((e.key === "Delete" || e.key === "Backspace") && (selectedId || selectedCid) &&
+  if ((e.key === "Delete" || e.key === "Backspace") && (selectedId || selectedCid || selectedLid) &&
       views.editor.hidden === false &&
       !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
     e.preventDefault();
@@ -453,7 +483,7 @@ $("f-standard").addEventListener("change", () => {
 });
 
 function updateStdNote() {
-  const name = current?.payload.standard;
+  const name = dsheet()?.standard;
   const s = STD[name];
   const note = $("std-note");
   if (!s) { note.textContent = ""; return; }
@@ -524,6 +554,21 @@ const CATALOG = {
   demarc: { name: "Demarcation pit", w: 24, h: 20 },
 };
 const ORDER = ["rack", "patch", "splice", "tray", "pit", "conduit", "cable", "connector", "demarc"];
+
+function newLink(kind, aId, bId) {
+  const std = STANDARDS[dsheet().standard] || STANDARDS.Generic;
+  const props =
+    kind === "cable"
+      ? { ref: "", fibreType: std.fibreType, fibreCount: std.fibreCount, lengthM: 50, partNo: "" }
+      : { ref: "", conduitDia: "100mm", material: "HDPE", lengthM: 50, conduitDepthMm: 450, conduitLocation: "Footpath" };
+  return { id: uid(), kind, aId, bId, label: kind === "cable" ? "Cable run" : "Conduit run", props, io: [] };
+}
+function compById(id) {
+  return dsheet().components.find((c) => c.id === id) || null;
+}
+function compCentre(c) {
+  return { x: c.x + c.w / 2, y: c.y + c.h / 2 };
+}
 
 function sheetScale(p) {
   // Keep symbols a consistent visual fraction of the sheet regardless of
@@ -633,7 +678,7 @@ function specLine(c) {
 }
 
 function curStd() {
-  return STD[current?.payload.standard] || null;
+  return STD[dsheet()?.standard] || null;
 }
 function labelFmtFor(kind) {
   const s = curStd();
@@ -805,10 +850,23 @@ function buildPalette() {
 
 function renderInspector() {
   const body = $("insp-body");
-  const c = current?.payload.components.find((x) => x.id === selectedCid);
+  const ds = current ? dsheet() : null;
+  const mk = (labelText, input) => {
+    const l = document.createElement("label");
+    l.textContent = labelText;
+    l.appendChild(input);
+    return l;
+  };
+
+  if (selectedLid && ds) {
+    const lk = ds.links.find((l) => l.id === selectedLid);
+    if (lk) return renderLinkInspector(body, lk, mk);
+  }
+
+  const c = ds ? ds.components.find((x) => x.id === selectedCid) : null;
   if (!c) {
     body.innerHTML =
-      '<p class="muted tiny">Nothing selected. Click a placed component with the Select tool.</p>';
+      '<p class="muted tiny">Nothing selected. Click a component or a run with the Select tool.</p>';
     return;
   }
   body.innerHTML = "";
@@ -817,12 +875,6 @@ function renderInspector() {
   kindP.textContent = CATALOG[c.kind].name;
   body.appendChild(kindP);
 
-  const mk = (labelText, input) => {
-    const l = document.createElement("label");
-    l.textContent = labelText;
-    l.appendChild(input);
-    return l;
-  };
   const onEdit = () => { markDirty(); render(); };
   const refreshCompliance = () => {
     const r = assess(c);
@@ -964,6 +1016,114 @@ function reorderComponent(c, where) {
   render();
 }
 
+function renderLinkInspector(body, lk, mk) {
+  body.innerHTML = "";
+  const a = compById(lk.aId);
+  const b = compById(lk.bId);
+  const title = document.createElement("p");
+  title.className = "insp-kind";
+  title.textContent = (lk.kind === "cable" ? "Cable run" : "Conduit run");
+  body.appendChild(title);
+
+  const ep = document.createElement("p");
+  ep.className = "io-meta";
+  ep.textContent = `${a ? a.label : "?"} → ${b ? b.label : "?"}`;
+  body.appendChild(ep);
+
+  const chip = document.createElement("span");
+  body.appendChild(chip);
+  const ul = document.createElement("ul");
+  ul.className = "compliance-msgs";
+  body.appendChild(ul);
+  const refresh = () => {
+    const r = assess({ kind: lk.kind, props: lk.props });
+    chip.className = "chip " + r.status;
+    chip.textContent =
+      { green: "✓ Meets standard", yellow: "⚠ Verify", red: "✗ Not compatible", na: "— No rule" }[r.status];
+    ul.innerHTML = "";
+    for (const m of r.messages) {
+      const li = document.createElement("li");
+      li.textContent = m;
+      ul.appendChild(li);
+    }
+  };
+
+  const onEdit = () => { markDirty(); render(); };
+
+  const labelInput = document.createElement("input");
+  labelInput.value = lk.label || "";
+  labelInput.addEventListener("input", () => { lk.label = labelInput.value; onEdit(); });
+  body.appendChild(mk("Label", labelInput));
+
+  const eqOpts = equipmentOptions(lk.kind);
+  if (eqOpts.length) {
+    const sel = document.createElement("select");
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = lk.props.partNo ? `Current: ${lk.props.partNo}` : "— pick approved equipment —";
+    sel.appendChild(blank);
+    eqOpts.forEach((o, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", () => {
+      const o = eqOpts[Number(sel.value)];
+      if (o) { o.apply(lk.props); markDirty(); render(); renderInspector(); }
+    });
+    body.appendChild(mk("Equipment (approved)", sel));
+  }
+
+  for (const key of KIND_FIELDS[lk.kind] || []) {
+    const meta = FIELD_META[key];
+    if (!meta) continue;
+    let inp;
+    if (meta.type === "select") {
+      inp = document.createElement("select");
+      for (const o of meta.opts) {
+        const opt = document.createElement("option");
+        opt.value = String(o);
+        opt.textContent = String(o);
+        inp.appendChild(opt);
+      }
+      inp.value = String(lk.props[key] ?? "");
+    } else {
+      inp = document.createElement("input");
+      inp.type = meta.type === "number" ? "number" : "text";
+      inp.value = lk.props[key] ?? "";
+    }
+    inp.addEventListener("input", () => {
+      let v = inp.value;
+      if (meta.type === "number") v = v === "" ? "" : parseFloat(v);
+      else if (key === "fibreCount") v = parseInt(v, 10);
+      lk.props[key] = v;
+      onEdit();
+      refresh();
+    });
+    body.appendChild(mk(meta.label, inp));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "insp-actions";
+  const mkBtn = (txt, fn) => {
+    const x = document.createElement("button");
+    x.className = "ghost small";
+    x.textContent = txt;
+    x.addEventListener("click", fn);
+    return x;
+  };
+  if (lk.kind === "cable")
+    actions.appendChild(mkBtn("I/O table →", () => {
+      showView("tables");
+      const t = document.getElementById("io-" + lk.id);
+      if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
+  actions.appendChild(mkBtn("Delete run", deleteSelected));
+  body.appendChild(actions);
+  refresh();
+}
+
 // ---------- Save / export ----------
 $("save-btn").addEventListener("click", saveCurrent);
 async function saveCurrent() {
@@ -1048,6 +1208,13 @@ function buildSvg(p, opts = {}) {
   const shapeLayer = el("g", { "clip-path": `url(#${clipId})` });
   for (const s of p.shapes || []) shapeLayer.appendChild(shapeNode(s, opts));
   svg.appendChild(shapeLayer);
+
+  const linkLayer = el("g", { "clip-path": `url(#${clipId})` });
+  for (const lk of p.links || []) {
+    const n = linkNode(lk, opts);
+    if (n) linkLayer.appendChild(n);
+  }
+  svg.appendChild(linkLayer);
 
   const compLayer = el("g", { "clip-path": `url(#${clipId})` });
   for (const c of p.components || []) compLayer.appendChild(componentNode(c, opts));
@@ -1197,6 +1364,42 @@ function componentNode(c, opts) {
         class: "cmp-sel", x: -2, y: -2, width: c.w + 4, height: c.h + 4,
         fill: "none", stroke: "#2563eb", "stroke-width": 0.5, "stroke-dasharray": "2 1.5",
       });
+  }
+  return g;
+}
+
+function linkNode(lk, opts) {
+  const a = compById(lk.aId);
+  const b = compById(lk.bId);
+  if (!a || !b) return null; // endpoint deleted
+  const pa = compCentre(a);
+  const pb = compCentre(b);
+  const sel = !opts.export && lk.id === selectedLid;
+  const g = el("g", {});
+  const colour = sel ? "#2563eb" : lk.kind === "conduit" ? "#6b7280" : "#000";
+  if (lk.kind === "conduit") {
+    g.appendChild(el("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: colour, "stroke-width": sel ? 1.4 : 1.1, "stroke-dasharray": "3 2" }));
+  } else {
+    g.appendChild(el("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: colour, "stroke-width": sel ? 1.0 : 0.6 }));
+  }
+  const mx = (pa.x + pb.x) / 2;
+  const my = (pa.y + pb.y) / 2;
+  const lab =
+    lk.kind === "cable"
+      ? `${lk.props.fibreCount || "?"}F` + (lk.props.lengthM ? ` · ${lk.props.lengthM} m` : "")
+      : `${lk.props.conduitDia || ""}` + (lk.props.lengthM ? ` · ${lk.props.lengthM} m` : "");
+  g.appendChild(el("rect", { x: mx - 13, y: my - 4.5, width: 26, height: 6, fill: "#fff", stroke: "none", opacity: 0.85 }));
+  g.appendChild(el("text", { x: mx, y: my, "font-size": 3, "text-anchor": "middle", "font-family": "sans-serif", fill: colour }, lab));
+  const r = assess({ kind: lk.kind, props: lk.props });
+  if (r.status !== "na") {
+    const col = { green: "#16a34a", yellow: "#eab308", red: "#dc2626" }[r.status];
+    g.appendChild(el("circle", { cx: mx + 14, cy: my - 1.5, r: 1.6, fill: col, stroke: "#fff", "stroke-width": 0.3 }));
+  }
+  if (!opts.export) {
+    g.dataset.lid = lk.id;
+    g.style.cursor = "pointer";
+    // wide invisible hit line for easy selection
+    g.appendChild(el("line", { x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y, stroke: "transparent", "stroke-width": 4 }));
   }
   return g;
 }
@@ -1432,96 +1635,133 @@ function showView(name) {
 $("tab-drawing").addEventListener("click", () => showView("drawing"));
 $("tab-tables").addEventListener("click", () => showView("tables"));
 
+function ioBlock(host, ent) {
+  // ent: { id, title, status, meta, entity, defCount, aDef, bDef }
+  const block = document.createElement("div");
+  block.className = "io-block";
+  block.id = "io-" + ent.id;
+  const h = document.createElement("h3");
+  h.textContent = ent.title;
+  if (ent.status && ent.status !== "na") {
+    const b = document.createElement("span");
+    b.className = "badge " + ent.status;
+    h.appendChild(b);
+  }
+  block.appendChild(h);
+  const meta = document.createElement("p");
+  meta.className = "io-meta";
+  meta.textContent = ent.meta;
+  block.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "io-actions";
+  const lbl = document.createElement("label");
+  lbl.className = "chk";
+  lbl.textContent = "Cores/ports:";
+  const num = document.createElement("input");
+  num.type = "number";
+  num.min = "0";
+  num.value = ent.entity.io?.length || 0;
+  lbl.appendChild(num);
+  actions.appendChild(lbl);
+  const syncBtn = document.createElement("button");
+  syncBtn.className = "ghost small";
+  syncBtn.textContent = `Set to count (${ent.defCount || "—"})`;
+  syncBtn.addEventListener("click", () => {
+    ensureIo(ent.entity, ent.defCount || 0);
+    markDirty();
+    renderTables();
+  });
+  actions.appendChild(syncBtn);
+  num.addEventListener("change", () => {
+    ensureIo(ent.entity, Math.max(0, parseInt(num.value, 10) || 0));
+    markDirty();
+    renderTables();
+  });
+  block.appendChild(actions);
+
+  const rows = ensureIo(ent.entity, ent.entity.io?.length || 0);
+  const table = document.createElement("table");
+  table.className = "io";
+  table.innerHTML =
+    "<thead><tr><th>Core</th><th>Tube</th><th>Fibre colour</th><th>A-end</th><th>B-end</th><th>Status</th></tr></thead>";
+  const tb = document.createElement("tbody");
+  rows.forEach((row, i) => {
+    const cc = coreColour(i + 1);
+    const tr = document.createElement("tr");
+    const tdN = document.createElement("td");
+    tdN.textContent = String(i + 1);
+    const tdT = document.createElement("td");
+    tdT.innerHTML = `${swatchHtml(cc.tubeHex, cc.tubeStripe)}T${cc.tubeNo} ${cc.tubeName}`;
+    const tdC = document.createElement("td");
+    tdC.innerHTML = `${swatchHtml(cc.hex, cc.stripe)}${cc.name}`;
+    tr.appendChild(tdN);
+    tr.appendChild(tdT);
+    tr.appendChild(tdC);
+    for (const key of ["a", "b", "status"]) {
+      const td = document.createElement("td");
+      const inp = document.createElement("input");
+      const placeholder = key === "a" ? ent.aDef : key === "b" ? ent.bDef : "";
+      inp.value = row[key] || "";
+      if (placeholder) inp.placeholder = placeholder;
+      inp.addEventListener("input", () => { row[key] = inp.value; markDirty(); });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  });
+  table.appendChild(tb);
+  block.appendChild(table);
+  host.appendChild(block);
+}
+
 function renderTables() {
   const host = $("tables-host");
   host.innerHTML = "";
-  const comps = current?.payload.components || [];
+  const ds = current ? dsheet() : null;
+  const comps = ds?.components || [];
+  const links = ds?.links || [];
+  const cableLinks = links.filter((l) => l.kind === "cable");
   const intro = document.createElement("p");
   intro.className = "io-meta";
   intro.textContent = "Input / Output connection tables. Core colours follow TIA-598.";
   host.appendChild(intro);
-  if (!comps.length) {
+  if (!comps.length && !cableLinks.length) {
     const e = document.createElement("p");
-    e.textContent = "No components placed yet.";
+    e.textContent = "No components or cable runs yet.";
     host.appendChild(e);
     return;
   }
   for (const c of comps) {
-    const block = document.createElement("div");
-    block.className = "io-block";
-    block.id = "io-" + c.id;
     const r = assess(c);
-    const h = document.createElement("h3");
-    h.textContent = `${c.label || CATALOG[c.kind].name}` + (c.props.ref ? ` — ${c.props.ref}` : "");
-    if (r.status !== "na") {
-      const b = document.createElement("span");
-      b.className = "badge " + r.status;
-      h.appendChild(b);
-    }
-    block.appendChild(h);
-    const meta = document.createElement("p");
-    meta.className = "io-meta";
-    meta.textContent = `${CATALOG[c.kind].name} · ${specLine(c)}` + (c.props.partNo ? ` · ${c.props.partNo}` : "");
-    block.appendChild(meta);
-
-    const actions = document.createElement("div");
-    actions.className = "io-actions";
-    const lbl = document.createElement("label");
-    lbl.className = "chk";
-    lbl.textContent = "Cores/ports:";
-    const num = document.createElement("input");
-    num.type = "number";
-    num.min = "0";
-    num.value = c.io?.length || 0;
-    lbl.appendChild(num);
-    actions.appendChild(lbl);
-    const syncBtn = document.createElement("button");
-    syncBtn.className = "ghost small";
-    syncBtn.textContent = `Set to fibre count (${ioCoreCount(c) || "—"})`;
-    syncBtn.addEventListener("click", () => {
-      ensureIo(c, ioCoreCount(c));
-      markDirty();
-      renderTables();
+    ioBlock(host, {
+      id: c.id,
+      title: `${c.label || CATALOG[c.kind].name}` + (c.props.ref ? ` — ${c.props.ref}` : ""),
+      status: r.status,
+      meta: `${CATALOG[c.kind].name} · ${specLine(c)}` + (c.props.partNo ? ` · ${c.props.partNo}` : ""),
+      entity: c,
+      defCount: ioCoreCount(c),
+      aDef: "",
+      bDef: "",
     });
-    actions.appendChild(syncBtn);
-    num.addEventListener("change", () => {
-      ensureIo(c, Math.max(0, parseInt(num.value, 10) || 0));
-      markDirty();
-      renderTables();
+  }
+  for (const lk of cableLinks) {
+    const a = compById(lk.aId);
+    const b = compById(lk.bId);
+    const r = assess({ kind: lk.kind, props: lk.props });
+    const aName = a ? a.props.ref || a.label : "?";
+    const bName = b ? b.props.ref || b.label : "?";
+    ioBlock(host, {
+      id: lk.id,
+      title: `${lk.label || "Cable run"} (${aName} → ${bName})`,
+      status: r.status,
+      meta: `Cable run · ${lk.props.fibreCount || "?"}F ${lk.props.fibreType || ""}` +
+        (lk.props.lengthM ? ` · ${lk.props.lengthM} m` : ""),
+      entity: lk,
+      defCount: parseInt(lk.props.fibreCount, 10) || 0,
+      aDef: aName,
+      bDef: bName,
     });
-    block.appendChild(actions);
-
-    const rows = ensureIo(c, c.io?.length || 0);
-    const table = document.createElement("table");
-    table.className = "io";
-    table.innerHTML =
-      "<thead><tr><th>Core</th><th>Tube</th><th>Fibre colour</th><th>A-end</th><th>B-end</th><th>Status</th></tr></thead>";
-    const tb = document.createElement("tbody");
-    rows.forEach((row, i) => {
-      const cc = coreColour(i + 1);
-      const tr = document.createElement("tr");
-      const tdN = document.createElement("td");
-      tdN.textContent = String(i + 1);
-      const tdT = document.createElement("td");
-      tdT.innerHTML = `${swatchHtml(cc.tubeHex, cc.tubeStripe)}T${cc.tubeNo} ${cc.tubeName}`;
-      const tdC = document.createElement("td");
-      tdC.innerHTML = `${swatchHtml(cc.hex, cc.stripe)}${cc.name}`;
-      tr.appendChild(tdN);
-      tr.appendChild(tdT);
-      tr.appendChild(tdC);
-      for (const key of ["a", "b", "status"]) {
-        const td = document.createElement("td");
-        const inp = document.createElement("input");
-        inp.value = row[key] || "";
-        inp.addEventListener("input", () => { row[key] = inp.value; markDirty(); });
-        td.appendChild(inp);
-        tr.appendChild(td);
-      }
-      tb.appendChild(tr);
-    });
-    table.appendChild(tb);
-    block.appendChild(table);
-    host.appendChild(block);
   }
 }
 
@@ -1577,7 +1817,44 @@ function attachCanvasHandlers(svg) {
       return;
     }
 
+    if (tool === "link" && linkKind) {
+      const cg = e.target.closest && e.target.closest("[data-cid]");
+      if (!cg) return;
+      const cid = cg.dataset.cid;
+      if (!pendingA) {
+        pendingA = cid;
+        selectedCid = cid;
+        selectedId = selectedLid = null;
+        $("link-hint").textContent = "Now click the SECOND component…";
+        applySelectionHighlight(svg);
+        highlightComponent(svg);
+        return;
+      }
+      if (cid === pendingA) return;
+      const lk = newLink(linkKind, pendingA, cid);
+      dsheet().links.push(lk);
+      pendingA = null;
+      linkKind = null;
+      selectedLid = lk.id;
+      selectedCid = selectedId = null;
+      clearPaletteActive();
+      setTool("select");
+      $("link-hint").textContent = "Run created. Pick a run type to add another.";
+      markDirty();
+      renderInspector();
+      render();
+      return;
+    }
+
     if (tool === "select") {
+      const lg = e.target.closest && e.target.closest("[data-lid]");
+      if (lg) {
+        selectedLid = lg.dataset.lid;
+        selectedCid = selectedId = null;
+        renderInspector();
+        render();
+        return;
+      }
       const cg = e.target.closest && e.target.closest("[data-cid]");
       if (cg) {
         selectedCid = cg.dataset.cid;
