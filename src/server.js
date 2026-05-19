@@ -8,10 +8,35 @@ import { db } from "./db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const ABR_GUID = process.env.ABR_GUID || "";
 
 const abnData = JSON.parse(
   readFileSync(join(__dirname, "..", "data", "abn.json"), "utf8")
 );
+
+// Calls the official ABR ABN Lookup JSON web service. The public service
+// returns only state + postcode (no street address) for privacy reasons.
+async function abrLookup(abn) {
+  const url = `https://abr.business.gov.au/json/AbnDetails.aspx?abn=${abn}&guid=${ABR_GUID}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`ABR service returned ${r.status}`);
+  const text = await r.text();
+  const m = text.match(/^[^({]*\((.*)\)[\s;]*$/s); // unwrap JSONP if present
+  const j = JSON.parse(m ? m[1] : text);
+  if (j.Message) throw new Error(j.Message);
+  if (!j.Abn) throw new Error("ABN not found");
+  return {
+    abn: String(j.Abn).replace(/\s+/g, ""),
+    entityName: j.EntityName || "",
+    tradingName: (Array.isArray(j.BusinessName) && j.BusinessName[0]) || j.EntityName || "",
+    entityType: j.EntityTypeName || "",
+    status: j.AbnStatus || "",
+    gstRegistered: Boolean(j.Gst),
+    stateCode: j.AddressState || "",
+    postcode: j.AddressPostcode || "",
+    address: [j.AddressState, j.AddressPostcode].filter(Boolean).join(" "),
+  };
+}
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -70,13 +95,24 @@ app.get("/api/me", requireAuth, (req, res) => {
 });
 
 // --- Mock ABN lookup ---
-app.get("/api/abn/:abn", requireAuth, (req, res) => {
+app.get("/api/abn/:abn", requireAuth, async (req, res) => {
   const raw = String(req.params.abn || "").replace(/\s+/g, "");
   if (!/^\d{11}$/.test(raw))
     return res.status(400).json({ error: "ABN must be 11 digits" });
+  if (ABR_GUID) {
+    try {
+      const business = await abrLookup(raw);
+      return res.json({ business, source: "abr" });
+    } catch (err) {
+      return res.status(502).json({ error: `ABR lookup failed: ${err.message}` });
+    }
+  }
   const match = abnData.businesses.find((b) => b.abn === raw);
-  if (!match) return res.status(404).json({ error: "ABN not found in sample dataset" });
-  res.json({ business: match });
+  if (!match)
+    return res.status(404).json({
+      error: "ABN not found in sample dataset (set ABR_GUID for live lookup)",
+    });
+  res.json({ business: match, source: "mock" });
 });
 
 app.get("/api/abn", requireAuth, (req, res) => {

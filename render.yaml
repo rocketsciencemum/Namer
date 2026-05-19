@@ -12,3 +12,7 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
+      # Set this in the Render dashboard to enable live ABR ABN Lookup.
+      # Leave unset to use the built-in mock dataset.
+      - key: ABR_GUID
+        sync: false
