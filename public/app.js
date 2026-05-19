@@ -158,7 +158,9 @@ function defaultPayload() {
     revisions: [
       { rev: "A", date: new Date().toISOString().slice(0, 10), description: "Initial issue", by: "" },
     ],
+    standard: "AARNet",
     shapes: [],
+    components: [],
   };
 }
 
@@ -166,6 +168,8 @@ let current = null; // { id, title, payload }
 let dirty = false;
 let tool = "select";
 let selectedId = null;
+let selectedCid = null;
+let placeKind = null;
 
 const SHEETS = {
   A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
@@ -180,11 +184,19 @@ async function openEditor(id) {
   const { drawing } = await api.get(`/api/drawings/${id}`);
   current = drawing;
   if (!current.payload || !current.payload.titleBlock) current.payload = defaultPayload();
+  if (!Array.isArray(current.payload.shapes)) current.payload.shapes = [];
+  if (!Array.isArray(current.payload.components)) current.payload.components = [];
+  if (!current.payload.standard) current.payload.standard = "AARNet";
   selectedId = null;
+  selectedCid = null;
+  placeKind = null;
   dirty = false;
   show("editor");
   $("save-state").textContent = "Saved";
   fillForm();
+  buildPalette();
+  $("f-standard").value = current.payload.standard;
+  renderInspector();
   render();
 }
 
@@ -318,31 +330,255 @@ $("add-rev-btn").addEventListener("click", () => {
 });
 
 // ---------- Tools ----------
+function clearPaletteActive() {
+  document.querySelectorAll("#palette button").forEach((x) => x.classList.remove("active"));
+}
+function setTool(name) {
+  tool = name;
+  document.querySelectorAll(".tool").forEach((x) =>
+    x.classList.toggle("active", x.dataset.tool === name)
+  );
+}
 document.querySelectorAll(".tool").forEach((b) =>
   b.addEventListener("click", () => {
-    document.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    tool = b.dataset.tool;
+    setTool(b.dataset.tool);
+    placeKind = null;
+    clearPaletteActive();
     selectedId = null;
+    selectedCid = null;
+    renderInspector();
     render();
   })
 );
 $("delete-shape-btn").addEventListener("click", deleteSelected);
 function deleteSelected() {
-  if (!selectedId) return;
-  current.payload.shapes = current.payload.shapes.filter((s) => s.id !== selectedId);
-  selectedId = null;
+  if (selectedId) {
+    current.payload.shapes = current.payload.shapes.filter((s) => s.id !== selectedId);
+    selectedId = null;
+  } else if (selectedCid) {
+    current.payload.components = current.payload.components.filter((c) => c.id !== selectedCid);
+    selectedCid = null;
+    renderInspector();
+  } else return;
   markDirty();
   render();
 }
 document.addEventListener("keydown", (e) => {
-  if ((e.key === "Delete" || e.key === "Backspace") && selectedId &&
+  if ((e.key === "Delete" || e.key === "Backspace") && (selectedId || selectedCid) &&
       views.editor.hidden === false &&
       !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
     e.preventDefault();
     deleteSelected();
   }
 });
+
+$("f-standard").addEventListener("change", () => {
+  current.payload.standard = $("f-standard").value;
+  markDirty();
+});
+
+// ---------- Fibre component catalog ----------
+const STANDARDS = {
+  AARNet: { fibreType: "OS2 (G.652.D)", polish: "APC", connector: "LC", fibreCount: 12 },
+  NBN: { fibreType: "OS2 (G.657.A1)", polish: "APC", connector: "LC", fibreCount: 24 },
+  Generic: { fibreType: "OS2 (G.652.D)", polish: "UPC", connector: "LC", fibreCount: 12 },
+};
+const OPT = {
+  fibreType: ["OS2 (G.652.D)", "OS2 (G.657.A1)", "OM4", "OM5"],
+  polish: ["APC", "UPC"],
+  connector: ["LC", "MPO", "SC", "FC"],
+  fibreCount: [2, 4, 6, 8, 12, 24, 48, 72, 96, 144, 288],
+  pitSize: ["P1", "P2", "P3", "P4", "P5", "P6", "P9", "P10", "FP-PIT", "JP-PIT"],
+  conduitDia: ["20mm", "32mm", "50mm", "63mm", "100mm", "HDPE 32mm", "HDPE 50mm"],
+};
+const FIELD_META = {
+  equipment: { label: "Equipment", type: "text" },
+  ref: { label: "Ref / ID", type: "text" },
+  fibreType: { label: "Fibre type", type: "select", opts: OPT.fibreType },
+  polish: { label: "Polish", type: "select", opts: OPT.polish },
+  connector: { label: "Connector", type: "select", opts: OPT.connector },
+  fibreCount: { label: "Fibre count", type: "select", opts: OPT.fibreCount },
+  pitSize: { label: "Pit size / type", type: "select", opts: OPT.pitSize },
+  conduitDia: { label: "Conduit Ø", type: "select", opts: OPT.conduitDia },
+  material: { label: "Material", type: "text" },
+  lengthM: { label: "Length (m)", type: "number" },
+};
+const KIND_FIELDS = {
+  rack: ["equipment", "ref"],
+  patch: ["equipment", "ref", "connector", "polish", "fibreCount"],
+  splice: ["equipment", "ref", "fibreCount"],
+  tray: ["ref", "fibreCount"],
+  pit: ["pitSize", "ref"],
+  conduit: ["conduitDia", "material", "lengthM", "ref"],
+  cable: ["fibreType", "fibreCount", "lengthM", "ref"],
+  connector: ["connector", "polish", "ref"],
+  demarc: ["ref", "equipment"],
+};
+const CATALOG = {
+  rack: { name: "User rack / ODF", w: 26, h: 40 },
+  patch: { name: "Patch panel", w: 32, h: 10 },
+  splice: { name: "Splice enclosure", w: 26, h: 16 },
+  tray: { name: "Splice tray", w: 22, h: 9 },
+  pit: { name: "Pit", w: 24, h: 18 },
+  conduit: { name: "Conduit / duct", w: 44, h: 7 },
+  cable: { name: "Fibre cable", w: 48, h: 6 },
+  connector: { name: "Connector", w: 12, h: 12 },
+  demarc: { name: "Demarcation pit", w: 24, h: 20 },
+};
+const ORDER = ["rack", "patch", "splice", "tray", "pit", "conduit", "cable", "connector", "demarc"];
+
+function newComponent(kind, cx, cy) {
+  const def = CATALOG[kind];
+  const std = STANDARDS[current.payload.standard] || STANDARDS.Generic;
+  return {
+    id: uid(),
+    kind,
+    x: cx - def.w / 2,
+    y: cy - def.h / 2,
+    w: def.w,
+    h: def.h,
+    label: def.name,
+    props: {
+      equipment: "",
+      ref: "",
+      material: "HDPE",
+      lengthM: kind === "conduit" || kind === "cable" ? 50 : "",
+      pitSize: kind === "demarc" ? "P6" : "P3",
+      conduitDia: "100mm",
+      fibreType: std.fibreType,
+      polish: std.polish,
+      connector: std.connector,
+      fibreCount: std.fibreCount,
+    },
+  };
+}
+
+function specLine(c) {
+  const p = c.props;
+  switch (c.kind) {
+    case "cable": return `${p.fibreCount}F ${p.fibreType}` + (p.lengthM ? ` · ${p.lengthM} m` : "");
+    case "conduit": return `${p.conduitDia} ${p.material}` + (p.lengthM ? ` · ${p.lengthM} m` : "");
+    case "connector": return `${p.connector}/${p.polish}`;
+    case "patch": return `${p.fibreCount}F · ${p.connector}/${p.polish}`;
+    case "splice":
+    case "tray": return `${p.fibreCount}F`;
+    case "pit":
+    case "demarc": return `${p.pitSize}`;
+    default: return p.ref || "";
+  }
+}
+
+function buildPalette() {
+  const pal = $("palette");
+  pal.innerHTML = "";
+  for (const kind of ORDER) {
+    const b = document.createElement("button");
+    b.textContent = CATALOG[kind].name;
+    b.dataset.kind = kind;
+    b.addEventListener("click", () => {
+      clearPaletteActive();
+      b.classList.add("active");
+      placeKind = kind;
+      setTool("place");
+    });
+    pal.appendChild(b);
+  }
+}
+
+function renderInspector() {
+  const body = $("insp-body");
+  const c = current?.payload.components.find((x) => x.id === selectedCid);
+  if (!c) {
+    body.innerHTML =
+      '<p class="muted tiny">Nothing selected. Click a placed component with the Select tool.</p>';
+    return;
+  }
+  body.innerHTML = "";
+  const kindP = document.createElement("p");
+  kindP.className = "insp-kind";
+  kindP.textContent = CATALOG[c.kind].name;
+  body.appendChild(kindP);
+
+  const mk = (labelText, input) => {
+    const l = document.createElement("label");
+    l.textContent = labelText;
+    l.appendChild(input);
+    return l;
+  };
+  const onEdit = () => { markDirty(); render(); };
+
+  const labelInput = document.createElement("input");
+  labelInput.value = c.label || "";
+  labelInput.addEventListener("input", () => { c.label = labelInput.value; onEdit(); });
+  body.appendChild(mk("Label", labelInput));
+
+  const dimRow = document.createElement("div");
+  dimRow.className = "row";
+  for (const dim of ["w", "h"]) {
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.min = "2";
+    inp.value = c[dim];
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      if (v > 0) { c[dim] = v; onEdit(); }
+    });
+    dimRow.appendChild(mk(dim === "w" ? "Width (mm)" : "Height (mm)", inp));
+  }
+  body.appendChild(dimRow);
+
+  for (const key of KIND_FIELDS[c.kind] || []) {
+    const meta = FIELD_META[key];
+    let inp;
+    if (meta.type === "select") {
+      inp = document.createElement("select");
+      for (const o of meta.opts) {
+        const opt = document.createElement("option");
+        opt.value = String(o);
+        opt.textContent = String(o);
+        inp.appendChild(opt);
+      }
+      inp.value = String(c.props[key] ?? "");
+    } else {
+      inp = document.createElement("input");
+      inp.type = meta.type === "number" ? "number" : "text";
+      inp.value = c.props[key] ?? "";
+    }
+    inp.addEventListener("input", () => {
+      let v = inp.value;
+      if (meta.type === "number") v = v === "" ? "" : parseFloat(v);
+      else if (key === "fibreCount") v = parseInt(v, 10);
+      c.props[key] = v;
+      onEdit();
+    });
+    body.appendChild(mk(meta.label, inp));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "insp-actions";
+  const mkBtn = (txt, fn) => {
+    const btn = document.createElement("button");
+    btn.className = "ghost small";
+    btn.textContent = txt;
+    btn.addEventListener("click", fn);
+    return btn;
+  };
+  actions.appendChild(mkBtn("Bring to front", () => reorderComponent(c, "front")));
+  actions.appendChild(mkBtn("Send to back", () => reorderComponent(c, "back")));
+  actions.appendChild(mkBtn("Delete", deleteSelected));
+  body.appendChild(actions);
+}
+
+function reorderComponent(c, where) {
+  const arr = current.payload.components;
+  const i = arr.indexOf(c);
+  if (i === -1) return;
+  arr.splice(i, 1);
+  if (where === "front") arr.push(c);
+  else arr.unshift(c);
+  markDirty();
+  render();
+}
 
 // ---------- Save / export ----------
 $("save-btn").addEventListener("click", saveCurrent);
@@ -429,6 +665,10 @@ function buildSvg(p, opts = {}) {
   for (const s of p.shapes || []) shapeLayer.appendChild(shapeNode(s, opts));
   svg.appendChild(shapeLayer);
 
+  const compLayer = el("g", { "clip-path": `url(#${clipId})` });
+  for (const c of p.components || []) compLayer.appendChild(componentNode(c, opts));
+  svg.appendChild(compLayer);
+
   // title block + revision table, bottom-right
   const tbW = Math.min(180, fw * 0.55);
   const tbH = 46;
@@ -480,6 +720,92 @@ function shapeNode(s, opts) {
     n.style.cursor = tool === "select" ? "move" : "crosshair";
   }
   return n;
+}
+
+function add(g, name, attrs, text) {
+  g.appendChild(el(name, attrs, text));
+}
+const SW = 0.4;
+const SYMBOL = {
+  rack(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, fill: "none", stroke: "#000", "stroke-width": SW });
+    add(g, "rect", { x: 0, y: 0, width: w, height: h * 0.16, fill: "#e8e8e8", stroke: "#000", "stroke-width": 0.3 });
+    add(g, "text", { x: w / 2, y: h * 0.12, "font-size": 2.6, "text-anchor": "middle", "font-family": "sans-serif" }, "ODF");
+    const rows = 5;
+    for (let i = 1; i <= rows; i++)
+      add(g, "line", { x1: 1, y1: h * 0.16 + (h * 0.84 * i) / (rows + 1), x2: w - 1, y2: h * 0.16 + (h * 0.84 * i) / (rows + 1), stroke: "#000", "stroke-width": 0.25 });
+  },
+  patch(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, fill: "none", stroke: "#000", "stroke-width": SW });
+    const n = 8, r = Math.min(h * 0.22, w / (n * 2.6));
+    for (let i = 0; i < n; i++)
+      add(g, "circle", { cx: (w * (i + 0.5)) / n, cy: h / 2, r, fill: "none", stroke: "#000", "stroke-width": 0.3 });
+  },
+  splice(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, rx: 2, ry: 2, fill: "none", stroke: "#000", "stroke-width": SW });
+    add(g, "line", { x1: -3, y1: h / 2, x2: 0, y2: h / 2, stroke: "#000", "stroke-width": 0.3 });
+    add(g, "line", { x1: w, y1: h / 2, x2: w + 3, y2: h / 2, stroke: "#000", "stroke-width": 0.3 });
+    add(g, "line", { x1: w * 0.5, y1: 1.5, x2: w * 0.5, y2: h - 1.5, stroke: "#000", "stroke-width": 0.25, "stroke-dasharray": "1 1" });
+  },
+  tray(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, fill: "none", stroke: "#000", "stroke-width": SW });
+    add(g, "path", { d: `M2 ${h - 1.5} C ${w * 0.3} 1, ${w * 0.7} 1, ${w - 2} ${h - 1.5}`, fill: "none", stroke: "#000", "stroke-width": 0.3 });
+  },
+  pit(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, rx: 1.5, ry: 1.5, fill: "none", stroke: "#000", "stroke-width": SW });
+    add(g, "rect", { x: 2, y: 2, width: w - 4, height: h - 4, fill: "none", stroke: "#000", "stroke-width": 0.25 });
+    add(g, "line", { x1: 2, y1: 2, x2: 5, y2: 5, stroke: "#000", "stroke-width": 0.25 });
+    add(g, "line", { x1: w - 2, y1: 2, x2: w - 5, y2: 5, stroke: "#000", "stroke-width": 0.25 });
+  },
+  conduit(g, w, h) {
+    add(g, "line", { x1: 0, y1: h * 0.3, x2: w, y2: h * 0.3, stroke: "#000", "stroke-width": 0.35 });
+    add(g, "line", { x1: 0, y1: h * 0.7, x2: w, y2: h * 0.7, stroke: "#000", "stroke-width": 0.35 });
+    add(g, "line", { x1: 0, y1: h * 0.3, x2: 0, y2: h * 0.7, stroke: "#000", "stroke-width": 0.3 });
+    add(g, "line", { x1: w, y1: h * 0.3, x2: w, y2: h * 0.7, stroke: "#000", "stroke-width": 0.3 });
+  },
+  cable(g, w, h) {
+    add(g, "line", { x1: 0, y1: h / 2, x2: w, y2: h / 2, stroke: "#000", "stroke-width": 0.45 });
+    const ticks = Math.max(3, Math.round(w / 8));
+    for (let i = 1; i < ticks; i++) {
+      const x = (w * i) / ticks;
+      add(g, "line", { x1: x, y1: h * 0.2, x2: x, y2: h * 0.8, stroke: "#000", "stroke-width": 0.3 });
+    }
+  },
+  connector(g, w, h, c) {
+    const apc = c?.props?.polish === "APC";
+    add(g, "line", { x1: 0, y1: h / 2, x2: w * 0.45, y2: h / 2, stroke: "#000", "stroke-width": 0.4 });
+    if (apc)
+      add(g, "path", { d: `M${w * 0.45} ${h * 0.2} L${w} ${h / 2} L${w * 0.45} ${h * 0.8} Z`, fill: "none", stroke: "#000", "stroke-width": 0.4 });
+    else
+      add(g, "rect", { x: w * 0.45, y: h * 0.25, width: w * 0.45, height: h * 0.5, fill: "none", stroke: "#000", "stroke-width": 0.4 });
+  },
+  demarc(g, w, h) {
+    add(g, "rect", { x: 0, y: 0, width: w, height: h, rx: 1.5, ry: 1.5, fill: "none", stroke: "#000", "stroke-width": 0.5 });
+    add(g, "rect", { x: -1.5, y: -1.5, width: w + 3, height: h + 3, fill: "none", stroke: "#000", "stroke-width": 0.3, "stroke-dasharray": "1.5 1.2" });
+    add(g, "path", { d: `M${w / 2} ${h * 0.28} L${w * 0.66} ${h / 2} L${w / 2} ${h * 0.72} L${w * 0.34} ${h / 2} Z`, fill: "#000" });
+    add(g, "text", { x: w / 2, y: h - 2.5, "font-size": 2.6, "text-anchor": "middle", "font-family": "sans-serif", fill: "#fff" }, "DP");
+  },
+};
+
+function componentNode(c, opts) {
+  const g = el("g", { transform: `translate(${c.x} ${c.y})` });
+  add(g, "rect", { x: -2, y: -2, width: c.w + 4, height: c.h + 4, fill: "transparent" });
+  (SYMBOL[c.kind] || SYMBOL.rack)(g, c.w, c.h, c);
+  if (c.label)
+    add(g, "text", { x: c.w / 2, y: c.h + 3.2, "font-size": 2.8, "font-weight": 600, "text-anchor": "middle", "font-family": "sans-serif" }, c.label);
+  const spec = specLine(c);
+  if (spec)
+    add(g, "text", { x: c.w / 2, y: c.h + 6, "font-size": 2.3, "text-anchor": "middle", "font-family": "sans-serif", fill: "#555" }, spec);
+  if (!opts.export) {
+    g.dataset.cid = c.id;
+    g.style.cursor = tool === "select" ? "move" : "default";
+    if (c.id === selectedCid)
+      add(g, "rect", {
+        class: "cmp-sel", x: -2, y: -2, width: c.w + 4, height: c.h + 4,
+        fill: "none", stroke: "#2563eb", "stroke-width": 0.5, "stroke-dasharray": "2 1.5",
+      });
+  }
+  return g;
 }
 
 function cell(svg, x, y, w, h, label, value, opts = {}) {
@@ -573,7 +899,7 @@ function render() {
   const svg = buildSvg(current.payload);
   host.appendChild(svg);
   attachCanvasHandlers(svg);
-  $("delete-shape-btn").disabled = !selectedId;
+  $("delete-shape-btn").disabled = !selectedId && !selectedCid;
 }
 
 function svgPoint(svg, evt) {
@@ -592,7 +918,19 @@ function applySelectionHighlight(svg) {
     if (n.tagName === "text") n.setAttribute("fill", color);
     else n.setAttribute("stroke", color);
   });
-  $("delete-shape-btn").disabled = !selectedId;
+  $("delete-shape-btn").disabled = !selectedId && !selectedCid;
+}
+
+function highlightComponent(svg) {
+  svg.querySelectorAll(".cmp-sel").forEach((n) => n.remove());
+  if (!selectedCid) return;
+  const g = svg.querySelector(`[data-cid="${selectedCid}"]`);
+  const c = current.payload.components.find((x) => x.id === selectedCid);
+  if (!g || !c) return;
+  g.appendChild(el("rect", {
+    class: "cmp-sel", x: -2, y: -2, width: c.w + 4, height: c.h + 4,
+    fill: "none", stroke: "#2563eb", "stroke-width": 0.5, "stroke-dasharray": "2 1.5",
+  }));
 }
 
 function attachCanvasHandlers(svg) {
@@ -601,17 +939,48 @@ function attachCanvasHandlers(svg) {
 
   svg.addEventListener("pointerdown", (e) => {
     const { x, y } = svgPoint(svg, e);
+
+    if (tool === "place" && placeKind) {
+      const c = newComponent(placeKind, x, y);
+      current.payload.components.push(c);
+      selectedCid = c.id;
+      selectedId = null;
+      placeKind = null;
+      clearPaletteActive();
+      setTool("select");
+      markDirty();
+      renderInspector();
+      render();
+      return;
+    }
+
     if (tool === "select") {
+      const cg = e.target.closest && e.target.closest("[data-cid]");
+      if (cg) {
+        selectedCid = cg.dataset.cid;
+        selectedId = null;
+        const c = current.payload.components.find((cc) => cc.id === selectedCid);
+        moving = { cid: c.id, node: cg, start: { x, y }, origin: { x: c.x, y: c.y } };
+        svg.setPointerCapture(e.pointerId);
+        applySelectionHighlight(svg);
+        highlightComponent(svg);
+        renderInspector();
+        return;
+      }
       const id = e.target?.dataset?.id;
       if (id) {
         selectedId = id;
+        selectedCid = null;
         const s = current.payload.shapes.find((sh) => sh.id === id);
         moving = { id, node: e.target, start: { x, y }, origin: JSON.parse(JSON.stringify(s)) };
         svg.setPointerCapture(e.pointerId);
       } else {
         selectedId = null;
+        selectedCid = null;
       }
       applySelectionHighlight(svg);
+      highlightComponent(svg);
+      renderInspector();
       return;
     }
     if (tool === "text") {
@@ -631,6 +1000,13 @@ function attachCanvasHandlers(svg) {
     if (moving) {
       const { x, y } = svgPoint(svg, e);
       const dx = x - moving.start.x, dy = y - moving.start.y;
+      if (moving.cid) {
+        const c = current.payload.components.find((cc) => cc.id === moving.cid);
+        c.x = moving.origin.x + dx;
+        c.y = moving.origin.y + dy;
+        moving.node.setAttribute("transform", `translate(${c.x} ${c.y})`);
+        return;
+      }
       const s = current.payload.shapes.find((sh) => sh.id === moving.id);
       const o = moving.origin;
       const n = moving.node;

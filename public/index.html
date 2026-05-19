@@ -135,6 +135,24 @@
           </details>
 
           <details open>
+            <summary>Fibre components</summary>
+            <label>Standard / preset
+              <select id="f-standard">
+                <option value="AARNet" selected>AARNet</option>
+                <option value="NBN">NBN</option>
+                <option value="Generic">Generic</option>
+              </select>
+            </label>
+            <div class="palette" id="palette"></div>
+            <p class="muted tiny">Pick a component, then click on the sheet to place it. Defaults follow the selected standard.</p>
+          </details>
+
+          <details open id="inspector-block">
+            <summary>Selected component</summary>
+            <div id="insp-body"><p class="muted tiny">Nothing selected. Click a placed component with the Select tool.</p></div>
+          </details>
+
+          <details open>
             <summary>Drawing tools</summary>
             <div class="tools" id="tools">
               <button class="tool active" data-tool="select">Select</button>
