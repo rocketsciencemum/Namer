@@ -157,6 +157,177 @@ $("new-drawing-btn").addEventListener("click", async () => {
 });
 $("back-btn").addEventListener("click", openDashboard);
 
+// ---------- Network wizard ----------
+$("wizard-btn").addEventListener("click", openWizard);
+
+function openWizard() {
+  if (!current) return;
+  const ov = document.createElement("div");
+  ov.className = "modal-ov";
+  const box = document.createElement("div");
+  box.className = "modal-box";
+  box.innerHTML =
+    "<h3>Network wizard</h3>" +
+    '<p class="muted tiny" style="margin:-6px 0 12px">Generates a compliant rack → pits → joint → demarcation chain on the active sheet.</p>';
+  const mkF = (labelText, inp) => {
+    const l = document.createElement("label");
+    l.textContent = labelText;
+    l.appendChild(inp);
+    box.appendChild(l);
+    return inp;
+  };
+  const cores = document.createElement("input");
+  cores.type = "number"; cores.min = "2"; cores.value = "48";
+  mkF("Total cores in the in-ground cable", cores);
+  const spareMode = document.createElement("select");
+  spareMode.innerHTML = '<option value="pct">Spare %</option><option value="fixed">Spare cores (fixed)</option>';
+  mkF("Spare policy", spareMode);
+  const spareVal = document.createElement("input");
+  spareVal.type = "number"; spareVal.min = "0"; spareVal.value = "20";
+  mkF("Spare value", spareVal);
+  const routeLen = document.createElement("input");
+  routeLen.type = "number"; routeLen.min = "1"; routeLen.value = "1200";
+  mkF("Route length (m)", routeLen);
+  const pitSpace = document.createElement("input");
+  pitSpace.type = "number"; pitSpace.min = "10"; pitSpace.value = "200";
+  mkF("Pit spacing (m)", pitSpace);
+
+  const actions = document.createElement("div");
+  actions.className = "insp-actions";
+  const gen = document.createElement("button");
+  gen.className = "primary"; gen.textContent = "Generate";
+  gen.addEventListener("click", () => {
+    const opts = {
+      totalCores: Math.max(2, parseInt(cores.value, 10) || 48),
+      spareMode: spareMode.value,
+      spareVal: Math.max(0, parseFloat(spareVal.value) || 0),
+      routeLengthM: Math.max(1, parseFloat(routeLen.value) || 1),
+      pitSpacingM: Math.max(10, parseFloat(pitSpace.value) || 200),
+    };
+    if (dsheet().components.length &&
+        !confirm("Replace the components and runs on this sheet with the generated network?"))
+      return;
+    ov.remove();
+    generateNetwork(opts);
+  });
+  const cancel = document.createElement("button");
+  cancel.className = "ghost small"; cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => ov.remove());
+  actions.appendChild(gen);
+  actions.appendChild(cancel);
+  box.appendChild(actions);
+  ov.appendChild(box);
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+
+function generateNetwork(o) {
+  const ds = dsheet();
+  const s = curStd();
+  const total = o.totalCores;
+  const spare = Math.min(
+    total,
+    o.spareMode === "pct" ? Math.ceil((total * o.spareVal) / 100) : Math.round(o.spareVal)
+  );
+  const working = Math.max(0, total - spare);
+  const nPits = Math.max(0, Math.min(10, Math.ceil(o.routeLengthM / o.pitSpacingM) - 1));
+
+  const [W, H] = sheetDims(ds);
+  const fx = 20, fw = W - 30;
+  const baseY = 10 + (H - 20) * 0.52;
+  const upY = baseY - 34 * sheetScale(ds);
+
+  // civil node x-positions: rack, hauling pits, joint pit, demarc
+  const civilN = 2 + nPits + 1;
+  const x0 = fx + fw * 0.07, x1 = fx + fw * 0.9;
+  const xAt = (i) => x0 + ((x1 - x0) * i) / (civilN - 1);
+
+  ds.components = [];
+  ds.links = [];
+  let pitNo = 0;
+  const ref = (pfx) => `${pfx}${String(++pitNo).padStart(8, "0")}`;
+  const mk = (kind, cx, cy, props, label) => {
+    const c = newComponent(kind, cx, cy);
+    Object.assign(c.props, props || {});
+    if (label) c.label = label;
+    ds.components.push(c);
+    return c;
+  };
+
+  // Rack + FTP at the start
+  const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack / ODF" }, "User rack / ODF");
+  const sizes = (s && s.ftp && s.ftp.sizes) || [24, 48, 96];
+  const ftpSize = sizes.find((z) => z >= working) || sizes[sizes.length - 1];
+  const ftpPart = s && s.ftp && (s.ftp.approved || []).find((a) => a.ports === ftpSize);
+  const patch = mk("patch", xAt(0), upY, {
+    fibreCount: ftpSize,
+    connector: s ? s.connector.required : "SC",
+    polish: s ? s.connector.requiredPolish : "APC",
+    partNo: ftpPart ? ftpPart.partNo : "",
+    ref: `APL-TP-${String(1).padStart(8, "0")}`,
+  }, `FTP ${ftpSize}P`);
+
+  // Hauling pits (P5)
+  const pits = [];
+  for (let i = 0; i < nPits; i++)
+    pits.push(mk("pit", xAt(1 + i), baseY,
+      { pitSize: "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 1, ref: ref("APL-PT-") },
+      `Pit P5`));
+
+  // Joint pit (P8) + Apex closure
+  const jointPit = mk("pit", xAt(civilN - 2), baseY,
+    { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+    "Joint pit P8");
+  const apex = s && s.splice && (s.splice.approved || [])
+    .slice().sort((a, b) => a.maxSingleFusion - b.maxSingleFusion)
+    .find((a) => a.maxSingleFusion >= total);
+  const splice = mk("splice", xAt(civilN - 2), upY,
+    { fibreCount: total, equipment: apex ? apex.model : "Splice closure", partNo: apex ? (apex.partNo || apex.model) : "" },
+    apex ? apex.model : "Splice closure");
+
+  // Demarcation
+  const demarc = mk("demarc", xAt(civilN - 1), baseY,
+    { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+    "Demarcation");
+
+  // Conduit civil chain
+  const civilChain = [rack, ...pits, jointPit, demarc];
+  const segLen = +(o.routeLengthM / (civilChain.length - 1)).toFixed(1);
+  for (let i = 0; i < civilChain.length - 1; i++) {
+    const lk = newLink("conduit", civilChain[i].id, civilChain[i + 1].id);
+    Object.assign(lk.props, { conduitDia: "100mm", material: "HDPE", lengthM: segLen, conduitDepthMm: 450, conduitLocation: "Footpath" });
+    ds.links.push(lk);
+  }
+
+  // Optical cable path: rack → FTP → splice → demarc
+  const fType = s ? s.fibre.requiredType : "OS2 (G.652.D)";
+  const cablePart = s && s.fibre && (s.fibre.approvedCables || []).find((a) => a.cores === total);
+  const cableProps = (len) => ({ fibreType: fType, fibreCount: total, lengthM: len, partNo: cablePart ? cablePart.partNo : "" });
+  const c1 = newLink("cable", rack.id, patch.id); Object.assign(c1.props, cableProps(5)); c1.label = "Rack tail"; ds.links.push(c1);
+  const c2 = newLink("cable", patch.id, splice.id); Object.assign(c2.props, cableProps(+(o.routeLengthM * 0.6).toFixed(1))); c2.label = "Lead-in"; ds.links.push(c2);
+  const feeder = newLink("cable", splice.id, demarc.id); Object.assign(feeder.props, cableProps(+(o.routeLengthM * 0.4).toFixed(1))); feeder.label = "Feeder"; ds.links.push(feeder);
+
+  // I/O on the feeder: working vs spare allocation
+  ensureIo(feeder, total);
+  feeder.io.forEach((row, i) => {
+    row.a = splice.props.ref || splice.label;
+    row.b = demarc.props.ref || demarc.label;
+    row.status = i < working ? "WORKING" : "SPARE";
+  });
+
+  current.payload.projectName = current.payload.projectName ||
+    `${total}F route (${working} working / ${spare} spare)`;
+  markDirty();
+  selectedCid = selectedId = selectedLid = null;
+  fillForm();
+  buildSheetTabs();
+  renderInspector();
+  showView("drawing");
+  alert(`Generated: ${total} cores (${working} working / ${spare} spare), ${nPits} hauling pit(s), ` +
+    `${apex ? apex.model : "splice"}, FTP ${ftpSize}P. Route ${o.routeLengthM} m. ` +
+    `Open the Checks tab to validate.`);
+}
+
 // ---------- ABN ----------
 async function loadAbnSamples() {
   try {
