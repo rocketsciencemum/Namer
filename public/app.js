@@ -150,6 +150,7 @@ function defaultPayload() {
     orientation: "landscape",
     titleBlock: {
       abn: "",
+      noAbn: false,
       company: "",
       address: "",
       logo: "",
@@ -210,6 +211,11 @@ async function openEditor(id) {
   $("f-standard").value = current.payload.standard;
   updateStdNote();
   renderInspector();
+  activeView = "drawing";
+  $("canvas-wrap").hidden = false;
+  $("tables-wrap").hidden = true;
+  $("tab-drawing").classList.add("active");
+  $("tab-tables").classList.remove("active");
   render();
 }
 
@@ -220,6 +226,7 @@ function fillForm() {
   $("f-sheet").value = p.sheet;
   $("f-orientation").value = p.orientation;
   $("f-abn").value = t.abn || "";
+  $("f-noabn").checked = !!t.noAbn;
   $("f-company").value = t.company || "";
   $("f-address").value = t.address || "";
   $("f-title").value = t.title || "";
@@ -256,11 +263,13 @@ function syncFromForm() {
     if (el === "f-sheetno" || el === "f-sheetof") v = parseInt(v, 10) || 1;
     p.titleBlock[key] = v;
   }
+  p.titleBlock.noAbn = $("f-noabn").checked;
   current.title = p.titleBlock.title?.trim() || "Untitled drawing";
   $("editor-title").textContent = current.title;
   markDirty();
   render();
 }
+$("f-noabn").addEventListener("change", syncFromForm);
 
 for (const elId of [
   "f-sheet", "f-orientation", "f-abn", "f-company", "f-address", "f-title",
@@ -413,9 +422,14 @@ const OPT = {
   fibreType: ["OS2 (G.652.D)", "OS2 (G.657.A1)", "OM4", "OM5"],
   polish: ["APC", "UPC"],
   connector: ["LC", "MPO", "SC", "FC"],
-  fibreCount: [2, 4, 6, 8, 12, 24, 48, 72, 96, 144, 288],
-  pitSize: ["P1", "P2", "P3", "P4", "P5", "P6", "P9", "P10", "FP-PIT", "JP-PIT"],
+  fibreCount: [2, 4, 6, 8, 12, 24, 48, 72, 96, 144, 288, 360],
+  pitSize: ["P1", "P2", "P3", "P4", "P5", "P6", "P8", "P9", "P10", "FP-PIT", "JP-PIT"],
   conduitDia: ["20mm", "32mm", "50mm", "63mm", "100mm", "HDPE 32mm", "HDPE 50mm"],
+  rackWidth: ['19" EIA', '21" ETSI', '23" telco'],
+  rackRU: [12, 18, 24, 27, 36, 42, 45, 47],
+  pitMaterial: ["Plastic", "Concrete"],
+  lidType: ["Composite Class B", "Class A", "Class B", "Class D"],
+  conduitLocation: ["Footpath", "Road shoulder", "Carriageway", "Other"],
 };
 const FIELD_META = {
   equipment: { label: "Equipment", type: "text" },
@@ -428,17 +442,25 @@ const FIELD_META = {
   conduitDia: { label: "Conduit Ø", type: "select", opts: OPT.conduitDia },
   material: { label: "Material", type: "text" },
   lengthM: { label: "Length (m)", type: "number" },
+  rackWidth: { label: "Rack width", type: "select", opts: OPT.rackWidth },
+  rackRU: { label: "Rack height (RU)", type: "select", opts: OPT.rackRU },
+  pitMaterial: { label: "Pit material", type: "select", opts: OPT.pitMaterial },
+  lidType: { label: "Lid type", type: "select", opts: OPT.lidType },
+  lidQty: { label: "Lid quantity", type: "number" },
+  pitWeightKg: { label: "Pit weight (kg)", type: "number" },
+  conduitDepthMm: { label: "Min depth / cover (mm)", type: "number" },
+  conduitLocation: { label: "Location", type: "select", opts: OPT.conduitLocation },
 };
 const KIND_FIELDS = {
-  rack: ["equipment", "ref"],
+  rack: ["equipment", "ref", "rackWidth", "rackRU"],
   patch: ["equipment", "ref", "connector", "polish", "fibreCount"],
   splice: ["equipment", "ref", "fibreCount"],
   tray: ["ref", "fibreCount"],
-  pit: ["pitSize", "ref"],
-  conduit: ["conduitDia", "material", "lengthM", "ref"],
+  pit: ["pitSize", "ref", "pitMaterial", "lidType", "lidQty", "pitWeightKg"],
+  conduit: ["conduitDia", "material", "lengthM", "conduitDepthMm", "conduitLocation", "ref"],
   cable: ["fibreType", "fibreCount", "lengthM", "ref"],
   connector: ["connector", "polish", "ref"],
-  demarc: ["ref", "equipment"],
+  demarc: ["ref", "equipment", "pitSize", "pitMaterial", "lidType", "lidQty", "pitWeightKg"],
 };
 const CATALOG = {
   rack: { name: "User rack / ODF", w: 26, h: 40 },
@@ -471,25 +493,56 @@ function newComponent(kind, cx, cy) {
       lengthM: kind === "conduit" || kind === "cable" ? 50 : "",
       pitSize: kind === "demarc" ? "P6" : "P3",
       conduitDia: "100mm",
+      conduitDepthMm: kind === "conduit" ? 450 : "",
+      conduitLocation: "Footpath",
+      rackWidth: '19" EIA',
+      rackRU: 45,
+      pitMaterial: "Plastic",
+      lidType: "Composite Class B",
+      lidQty: 2,
+      pitWeightKg: "",
       fibreType: std.fibreType,
       polish: std.polish,
       connector: std.connector,
       fibreCount: std.fibreCount,
     },
+    io: [],
   };
+}
+
+const TIA = [
+  ["Blue", "#1f4ed8"], ["Orange", "#e67e22"], ["Green", "#1e8b3a"], ["Brown", "#7b4a12"],
+  ["Slate", "#7a8aa0"], ["White", "#e5e7eb"], ["Red", "#d6283b"], ["Black", "#111827"],
+  ["Yellow", "#f4d03f"], ["Violet", "#7d3cc8"], ["Rose", "#e58fb0"], ["Aqua", "#37c9c9"],
+];
+function coreColour(n) {
+  return TIA[(n - 1) % 12];
+}
+function ioCoreCount(c) {
+  const p = c.props || {};
+  const n = parseInt(p.fibreCount, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+function ensureIo(c, count) {
+  if (!Array.isArray(c.io)) c.io = [];
+  if (count == null) count = c.io.length;
+  while (c.io.length < count) c.io.push({ a: "", b: "", status: "" });
+  if (c.io.length > count) c.io.length = count;
+  return c.io;
 }
 
 function specLine(c) {
   const p = c.props;
   switch (c.kind) {
     case "cable": return `${p.fibreCount}F ${p.fibreType}` + (p.lengthM ? ` · ${p.lengthM} m` : "");
-    case "conduit": return `${p.conduitDia} ${p.material}` + (p.lengthM ? ` · ${p.lengthM} m` : "");
+    case "conduit": return `${p.conduitDia} ${p.material}` + (p.lengthM ? ` · ${p.lengthM} m` : "") + (p.conduitDepthMm ? ` · ${p.conduitDepthMm}mm cover` : "");
     case "connector": return `${p.connector}/${p.polish}`;
     case "patch": return `${p.fibreCount}F · ${p.connector}/${p.polish}`;
     case "splice":
     case "tray": return `${p.fibreCount}F`;
+    case "rack": return `${p.rackWidth || ""} · ${p.rackRU || ""}RU`;
     case "pit":
-    case "demarc": return `${p.pitSize}`;
+    case "demarc": return `${p.pitSize} · ${p.pitMaterial || ""}` + (p.lidQty ? ` · ${p.lidQty}× ${p.lidType || "lid"}` : "");
     default: return p.ref || "";
   }
 }
@@ -554,6 +607,18 @@ function assess(c) {
     case "connector":
       connCheck(p.connector, p.polish);
       break;
+    case "conduit": {
+      const MIN = { Footpath: 450, "Road shoulder": 600, Carriageway: 750, Other: 450 };
+      const need = MIN[p.conduitLocation] ?? 450;
+      const d = parseFloat(p.conduitDepthMm);
+      if (!Number.isFinite(d) || d <= 0)
+        down("yellow", `Set conduit depth/cover to verify minimum (${need} mm for ${p.conduitLocation || "Footpath"}).`);
+      else if (d < need)
+        down("red", `Cover ${d} mm is below ${need} mm minimum for ${p.conduitLocation || "Footpath"}.`);
+      else
+        msgs.push(`Cover ${d} mm meets ${need} mm minimum for ${p.conduitLocation || "Footpath"}.`);
+      break;
+    }
     case "splice":
     case "tray":
       if (s.splice?.method)
@@ -565,6 +630,8 @@ function assess(c) {
       if (ap) msgs.push(`${ap.name} (${ap.dims} mm, part ${ap.partNo}) — ${ap.role}.`);
       else if (s.pit.accepted?.length && p.pitSize && !s.pit.accepted.includes(p.pitSize))
         down("yellow", `Pit ${p.pitSize} not in accepted set (${s.pit.accepted.join("/")}) — verify.`);
+      if (p.pitMaterial)
+        msgs.push(`${p.pitMaterial} pit` + (p.lidQty ? `, ${p.lidQty}× ${p.lidType || "lid"}` : "") + (p.pitWeightKg ? `, ${p.pitWeightKg} kg` : "") + ".");
       break;
     }
     default:
@@ -596,7 +663,13 @@ function equipmentOptions(kind) {
   if (kind === "pit" || kind === "demarc")
     return (s.pit.approved || []).map((a) => ({
       label: `${a.name} — ${a.dims} (part ${a.partNo})`,
-      apply: (p) => { p.pitSize = a.name; p.partNo = a.partNo; },
+      apply: (p) => {
+        p.pitSize = a.name;
+        p.partNo = a.partNo;
+        p.pitMaterial = "Plastic";
+        p.lidType = "Composite Class B";
+        p.lidQty = a.name === "P8" ? 2 : 1;
+      },
     }));
   return [];
 }
@@ -767,6 +840,11 @@ function renderInspector() {
       render();
       renderInspector();
     }));
+  actions.appendChild(mkBtn("I/O table →", () => {
+    showView("tables");
+    const t = document.getElementById("io-" + c.id);
+    if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
   actions.appendChild(mkBtn("Bring to front", () => reorderComponent(c, "front")));
   actions.appendChild(mkBtn("Send to back", () => reorderComponent(c, "back")));
   actions.appendChild(mkBtn("Delete", deleteSelected));
@@ -1049,8 +1127,13 @@ function drawTitleBlock(svg, p, x, y, w, h) {
     }));
   }
   cell(svg, x, y + 16, colA, 10, "", t.company || "Company", { bold: true });
-  cell(svg, x, y + 26, colA, 8, "ABN", t.abn || "");
-  cell(svg, x, y + 34, colA, h - 34, "", t.address || "");
+  const showAbn = !t.noAbn && (t.abn || "").trim() !== "";
+  if (showAbn) {
+    cell(svg, x, y + 26, colA, 8, "ABN", t.abn);
+    cell(svg, x, y + 34, colA, h - 34, "", t.address || "");
+  } else {
+    cell(svg, x, y + 26, colA, h - 26, "", t.address || "");
+  }
 
   // Middle: title + number
   const mx = x + colA;
@@ -1111,6 +1194,110 @@ function render() {
   host.appendChild(svg);
   attachCanvasHandlers(svg);
   $("delete-shape-btn").disabled = !selectedId && !selectedCid;
+}
+
+let activeView = "drawing";
+function showView(name) {
+  activeView = name;
+  const draw = name === "drawing";
+  $("canvas-wrap").hidden = !draw;
+  $("tables-wrap").hidden = draw;
+  $("tab-drawing").classList.toggle("active", draw);
+  $("tab-tables").classList.toggle("active", !draw);
+  if (draw) render();
+  else renderTables();
+}
+$("tab-drawing").addEventListener("click", () => showView("drawing"));
+$("tab-tables").addEventListener("click", () => showView("tables"));
+
+function renderTables() {
+  const host = $("tables-host");
+  host.innerHTML = "";
+  const comps = current?.payload.components || [];
+  const intro = document.createElement("p");
+  intro.className = "io-meta";
+  intro.textContent = "Input / Output connection tables. Core colours follow TIA-598.";
+  host.appendChild(intro);
+  if (!comps.length) {
+    const e = document.createElement("p");
+    e.textContent = "No components placed yet.";
+    host.appendChild(e);
+    return;
+  }
+  for (const c of comps) {
+    const block = document.createElement("div");
+    block.className = "io-block";
+    block.id = "io-" + c.id;
+    const r = assess(c);
+    const h = document.createElement("h3");
+    h.textContent = `${c.label || CATALOG[c.kind].name}` + (c.props.ref ? ` — ${c.props.ref}` : "");
+    if (r.status !== "na") {
+      const b = document.createElement("span");
+      b.className = "badge " + r.status;
+      h.appendChild(b);
+    }
+    block.appendChild(h);
+    const meta = document.createElement("p");
+    meta.className = "io-meta";
+    meta.textContent = `${CATALOG[c.kind].name} · ${specLine(c)}` + (c.props.partNo ? ` · ${c.props.partNo}` : "");
+    block.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "io-actions";
+    const lbl = document.createElement("label");
+    lbl.className = "chk";
+    lbl.textContent = "Cores/ports:";
+    const num = document.createElement("input");
+    num.type = "number";
+    num.min = "0";
+    num.value = c.io?.length || 0;
+    lbl.appendChild(num);
+    actions.appendChild(lbl);
+    const syncBtn = document.createElement("button");
+    syncBtn.className = "ghost small";
+    syncBtn.textContent = `Set to fibre count (${ioCoreCount(c) || "—"})`;
+    syncBtn.addEventListener("click", () => {
+      ensureIo(c, ioCoreCount(c));
+      markDirty();
+      renderTables();
+    });
+    actions.appendChild(syncBtn);
+    num.addEventListener("change", () => {
+      ensureIo(c, Math.max(0, parseInt(num.value, 10) || 0));
+      markDirty();
+      renderTables();
+    });
+    block.appendChild(actions);
+
+    const rows = ensureIo(c, c.io?.length || 0);
+    const table = document.createElement("table");
+    table.className = "io";
+    table.innerHTML =
+      "<thead><tr><th>Core</th><th>Colour</th><th>A-end</th><th>B-end</th><th>Status</th></tr></thead>";
+    const tb = document.createElement("tbody");
+    rows.forEach((row, i) => {
+      const [cname, chex] = coreColour(i + 1);
+      const tr = document.createElement("tr");
+      const tdN = document.createElement("td");
+      tdN.textContent = String(i + 1);
+      const tdC = document.createElement("td");
+      tdC.innerHTML = `<span class="swatch" style="background:${chex}"></span>${cname}`;
+      tr.appendChild(tdN);
+      tr.appendChild(tdC);
+      for (const key of ["a", "b", "status"]) {
+        const td = document.createElement("td");
+        const inp = document.createElement("input");
+        inp.value = row[key] || "";
+        inp.addEventListener("input", () => { row[key] = inp.value; markDirty(); });
+        td.appendChild(inp);
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    block.appendChild(table);
+    host.appendChild(block);
+  }
 }
 
 function svgPoint(svg, evt) {

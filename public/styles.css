@@ -142,14 +142,41 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .label-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
 .label-hint.bad { color: var(--danger); }
 
+.chk { flex-direction: row !important; align-items: center; gap: 6px; color: var(--text); }
+.chk input { width: auto; }
+
+.vtabs { display: flex; gap: 4px; margin-left: 14px; }
+.vtab {
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer;
+}
+.vtab.active { color: #fff; border-color: var(--primary); }
+
+.tables-wrap { flex: 1; overflow: auto; background: #fff; color: #111; padding: 24px; }
+#tables-host { max-width: 1000px; margin: 0 auto; }
+.io-block { margin-bottom: 26px; border: 1px solid #ccc; border-radius: 8px; padding: 14px; }
+.io-block h3 { margin: 0 0 4px; font-size: 15px; }
+.io-block .io-meta { color: #555; font-size: 12px; margin: 0 0 10px; }
+table.io { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.io th, table.io td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; }
+table.io th { background: #eee; }
+table.io input { width: 100%; border: 0; background: transparent; color: #111; font: inherit; padding: 2px; }
+table.io input:focus { outline: 1px solid var(--primary); }
+.swatch { display: inline-block; width: 12px; height: 12px; border: 1px solid #666; border-radius: 2px; vertical-align: -2px; margin-right: 6px; }
+.io-actions { margin: 8px 0; display: flex; gap: 8px; align-items: center; }
+.io-actions input { width: 70px; }
+.badge { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: 0; margin-left: 6px; }
+.badge.green { background: #16a34a; } .badge.yellow { background: #eab308; } .badge.red { background: #dc2626; }
+
 /* Print */
 @media print {
   body { background: #fff; }
-  .topbar, .panel, .canvas-wrap { all: unset; }
   .view:not(#view-editor), #view-editor .topbar, #view-editor .panel { display: none !important; }
   .editor { display: block; }
-  .canvas-wrap { display: block; padding: 0; background: #fff; overflow: visible; }
+  .canvas-wrap:not([hidden]) { display: block; padding: 0; background: #fff; overflow: visible; }
   #sheet-host { box-shadow: none; }
   #sheet-host svg { width: 100%; height: auto; }
+  .tables-wrap:not([hidden]) { display: block; padding: 0; overflow: visible; }
+  table.io input { border: 0; }
   @page { margin: 8mm; }
 }

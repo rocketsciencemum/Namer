@@ -48,6 +48,10 @@
       <header class="topbar">
         <button id="back-btn" class="ghost">&larr; Drawings</button>
         <strong id="editor-title">Drawing</strong>
+        <div class="vtabs">
+          <button id="tab-drawing" class="vtab active">Drawing</button>
+          <button id="tab-tables" class="vtab">Tables</button>
+        </div>
         <span class="spacer"></span>
         <span id="save-state" class="muted"></span>
         <button id="save-btn" class="primary">Save</button>
@@ -77,6 +81,7 @@
 
           <details open>
             <summary>Company / ABN</summary>
+            <label class="chk"><input id="f-noabn" type="checkbox" /> Not in Australia / no ABN</label>
             <label>ABN
               <input id="f-abn" list="abn-samples" placeholder="11 digits" />
             </label>
@@ -168,6 +173,9 @@
 
         <div class="canvas-wrap" id="canvas-wrap">
           <div id="sheet-host"></div>
+        </div>
+        <div class="tables-wrap" id="tables-wrap" hidden>
+          <div id="tables-host"></div>
         </div>
       </div>
     </section>
