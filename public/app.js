@@ -516,7 +516,31 @@ const TIA = [
   ["Yellow", "#f4d03f"], ["Violet", "#7d3cc8"], ["Rose", "#e58fb0"], ["Aqua", "#37c9c9"],
 ];
 function coreColour(n) {
-  return TIA[(n - 1) % 12];
+  // TIA-598-C: 12 base colours; every second group of 12 carries a black
+  // tracer stripe (fibres 13-24, 37-48, ...). Beyond 12 fibres are grouped
+  // into 12-fibre buffer tubes (tube colours follow the same scheme).
+  const idx = (n - 1) % 12;
+  const group = Math.floor((n - 1) / 12);
+  const stripe = group % 2 === 1;
+  const [base, hex] = TIA[idx];
+  const tubeNo = group + 1;
+  const [tubeName, tubeHex] = TIA[group % 12];
+  const tubeStripe = Math.floor(group / 12) % 2 === 1;
+  return {
+    name: base + (stripe ? " / black tracer" : ""),
+    hex,
+    stripe,
+    tubeNo,
+    tubeName: tubeName + (tubeStripe ? " / black tracer" : ""),
+    tubeHex,
+    tubeStripe,
+  };
+}
+function swatchHtml(hex, stripe) {
+  const bg = stripe
+    ? `background:repeating-linear-gradient(90deg,${hex} 0 5px,#111 5px 7px)`
+    : `background:${hex}`;
+  return `<span class="swatch" style="${bg}"></span>`;
 }
 function ioCoreCount(c) {
   const p = c.props || {};
@@ -1290,16 +1314,19 @@ function renderTables() {
     const table = document.createElement("table");
     table.className = "io";
     table.innerHTML =
-      "<thead><tr><th>Core</th><th>Colour</th><th>A-end</th><th>B-end</th><th>Status</th></tr></thead>";
+      "<thead><tr><th>Core</th><th>Tube</th><th>Fibre colour</th><th>A-end</th><th>B-end</th><th>Status</th></tr></thead>";
     const tb = document.createElement("tbody");
     rows.forEach((row, i) => {
-      const [cname, chex] = coreColour(i + 1);
+      const cc = coreColour(i + 1);
       const tr = document.createElement("tr");
       const tdN = document.createElement("td");
       tdN.textContent = String(i + 1);
+      const tdT = document.createElement("td");
+      tdT.innerHTML = `${swatchHtml(cc.tubeHex, cc.tubeStripe)}T${cc.tubeNo} ${cc.tubeName}`;
       const tdC = document.createElement("td");
-      tdC.innerHTML = `<span class="swatch" style="background:${chex}"></span>${cname}`;
+      tdC.innerHTML = `${swatchHtml(cc.hex, cc.stripe)}${cc.name}`;
       tr.appendChild(tdN);
+      tr.appendChild(tdT);
       tr.appendChild(tdC);
       for (const key of ["a", "b", "status"]) {
         const td = document.createElement("td");
