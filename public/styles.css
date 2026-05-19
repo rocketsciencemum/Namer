@@ -142,6 +142,14 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .label-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
 .label-hint.bad { color: var(--danger); }
 
+.sheet-tabs { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.sheet-tabs button {
+  text-align: left; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; cursor: pointer; font-size: 12px;
+}
+.sheet-tabs button.active { border-color: var(--primary); color: #fff; background: #1d2740; }
+.sheet-tabs .stype { color: var(--muted); font-size: 11px; }
+
 .chk { flex-direction: row !important; align-items: center; gap: 6px; color: var(--text); }
 .chk input { width: auto; }
 

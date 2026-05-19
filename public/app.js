@@ -92,9 +92,13 @@ async function openDashboard() {
       </div>
       <button class="ghost small" data-act="open">Open</button>
       <button class="ghost small" data-act="del">Delete</button>`;
-    li.querySelector("b").textContent = d.title;
+    const pl = d.payload || {};
+    const ds = Array.isArray(pl.sheets) ? pl.sheets.find((s) => s.type === "drawing") : null;
+    const dn = ds?.titleBlock?.drawingNumber || pl.titleBlock?.drawingNumber || "no number";
+    const sheetCount = Array.isArray(pl.sheets) ? pl.sheets.length : 1;
+    li.querySelector("b").textContent = pl.projectName || d.title;
     li.querySelector("span").textContent =
-      `${d.payload?.titleBlock?.drawingNumber || "no number"} · updated ${new Date(d.updatedAt).toLocaleString()}`;
+      `${dn} · ${sheetCount} sheet${sheetCount === 1 ? "" : "s"} · updated ${new Date(d.updatedAt).toLocaleString()}`;
     li.querySelector('[data-act="open"]').addEventListener("click", () => openEditor(d.id));
     li.querySelector('[data-act="del"]').addEventListener("click", async () => {
       if (!confirm(`Delete "${d.title}"?`)) return;
@@ -144,29 +148,24 @@ $("abn-lookup-btn").addEventListener("click", async () => {
 });
 
 // ---------- Editor state ----------
-function defaultPayload() {
+function newTitleBlock() {
   return {
+    abn: "", noAbn: false, company: "", address: "", logo: "",
+    title: "", drawingNumber: "", revision: "A", scale: "1:1", units: "mm",
+    projection: "Third angle", sheetNo: 1, sheetOf: 1,
+    date: new Date().toISOString().slice(0, 10),
+    drawnBy: "", checkedBy: "", approvedBy: "",
+  };
+}
+function newDrawingSheet(name, ref) {
+  return {
+    id: uid(),
+    type: "drawing",
+    name: name || "Drawing",
+    ref: ref || "001",
     sheet: "A3",
     orientation: "landscape",
-    titleBlock: {
-      abn: "",
-      noAbn: false,
-      company: "",
-      address: "",
-      logo: "",
-      title: "",
-      drawingNumber: "",
-      revision: "A",
-      scale: "1:1",
-      units: "mm",
-      projection: "Third angle",
-      sheetNo: 1,
-      sheetOf: 1,
-      date: new Date().toISOString().slice(0, 10),
-      drawnBy: "",
-      checkedBy: "",
-      approvedBy: "",
-    },
+    titleBlock: newTitleBlock(),
     revisions: [
       { rev: "A", date: new Date().toISOString().slice(0, 10), description: "Initial issue", by: "" },
     ],
@@ -174,6 +173,50 @@ function defaultPayload() {
     shapes: [],
     components: [],
   };
+}
+function defaultPayload() {
+  const d = newDrawingSheet("Drawing 1", "001");
+  return {
+    projectName: "",
+    activeSheetId: d.id,
+    sheets: [
+      { id: uid(), type: "cover", name: "Cover sheet", ref: "000" },
+      d,
+    ],
+  };
+}
+
+// Migrate a legacy single-sheet payload into the sheets[] container.
+function migratePayload(pl) {
+  if (pl && Array.isArray(pl.sheets) && pl.sheets.length) return pl;
+  const d = newDrawingSheet("Drawing 1", "001");
+  if (pl && pl.titleBlock) {
+    Object.assign(d, {
+      sheet: pl.sheet || "A3",
+      orientation: pl.orientation || "landscape",
+      titleBlock: { ...newTitleBlock(), ...pl.titleBlock },
+      revisions: Array.isArray(pl.revisions) ? pl.revisions : d.revisions,
+      standard: pl.standard || "AARNet",
+      shapes: Array.isArray(pl.shapes) ? pl.shapes : [],
+      components: Array.isArray(pl.components) ? pl.components : [],
+    });
+  }
+  return {
+    projectName: pl?.titleBlock?.title || "",
+    activeSheetId: d.id,
+    sheets: [{ id: uid(), type: "cover", name: "Cover sheet", ref: "000" }, d],
+  };
+}
+
+function aSheet() {
+  const pl = current.payload;
+  return pl.sheets.find((s) => s.id === pl.activeSheetId) || pl.sheets[0];
+}
+// Active sheet if it is a drawing, else the first drawing sheet.
+function dsheet() {
+  const a = aSheet();
+  if (a && a.type === "drawing") return a;
+  return current.payload.sheets.find((s) => s.type === "drawing");
 }
 
 let current = null; // { id, title, payload }
@@ -195,11 +238,13 @@ function markDirty() {
 async function openEditor(id) {
   const { drawing } = await api.get(`/api/drawings/${id}`);
   current = drawing;
-  if (!current.payload || !current.payload.titleBlock) current.payload = defaultPayload();
-  if (!Array.isArray(current.payload.shapes)) current.payload.shapes = [];
-  if (!Array.isArray(current.payload.components)) current.payload.components = [];
-  if (!["AARNet", "Generic"].includes(current.payload.standard))
-    current.payload.standard = "AARNet";
+  current.payload = migratePayload(current.payload);
+  for (const s of current.payload.sheets) {
+    if (s.type !== "drawing") continue;
+    if (!Array.isArray(s.shapes)) s.shapes = [];
+    if (!Array.isArray(s.components)) s.components = [];
+    if (!["AARNet", "Generic"].includes(s.standard)) s.standard = "AARNet";
+  }
   selectedId = null;
   selectedCid = null;
   placeKind = null;
@@ -208,7 +253,8 @@ async function openEditor(id) {
   $("save-state").textContent = "Saved";
   fillForm();
   buildPalette();
-  $("f-standard").value = current.payload.standard;
+  buildSheetTabs();
+  $("f-standard").value = dsheet().standard;
   updateStdNote();
   renderInspector();
   activeView = "drawing";
@@ -220,9 +266,10 @@ async function openEditor(id) {
 }
 
 function fillForm() {
-  const p = current.payload;
+  const p = dsheet();
   const t = p.titleBlock;
   $("editor-title").textContent = current.title;
+  $("f-project").value = current.payload.projectName || "";
   $("f-sheet").value = p.sheet;
   $("f-orientation").value = p.orientation;
   $("f-abn").value = t.abn || "";
@@ -255,7 +302,8 @@ const FORM_MAP = {
 
 function syncFromForm() {
   if (!current) return;
-  const p = current.payload;
+  const p = dsheet();
+  current.payload.projectName = $("f-project").value;
   p.sheet = $("f-sheet").value;
   p.orientation = $("f-orientation").value;
   for (const [el, key] of Object.entries(FORM_MAP)) {
@@ -264,12 +312,14 @@ function syncFromForm() {
     p.titleBlock[key] = v;
   }
   p.titleBlock.noAbn = $("f-noabn").checked;
-  current.title = p.titleBlock.title?.trim() || "Untitled drawing";
+  current.title = current.payload.projectName?.trim() ||
+    p.titleBlock.title?.trim() || "Untitled drawing";
   $("editor-title").textContent = current.title;
   markDirty();
   render();
 }
 $("f-noabn").addEventListener("change", syncFromForm);
+$("f-project").addEventListener("input", syncFromForm);
 
 for (const elId of [
   "f-sheet", "f-orientation", "f-abn", "f-company", "f-address", "f-title",
@@ -290,7 +340,7 @@ $("f-logo").addEventListener("change", (e) => {
   }
   const reader = new FileReader();
   reader.onload = () => {
-    current.payload.titleBlock.logo = reader.result;
+    dsheet().titleBlock.logo = reader.result;
     updateLogoPreview();
     markDirty();
     render();
@@ -298,7 +348,7 @@ $("f-logo").addEventListener("change", (e) => {
   reader.readAsDataURL(file);
 });
 $("logo-clear-btn").addEventListener("click", () => {
-  current.payload.titleBlock.logo = "";
+  dsheet().titleBlock.logo = "";
   $("f-logo").value = "";
   updateLogoPreview();
   markDirty();
@@ -314,7 +364,7 @@ function updateLogoPreview() {
 function renderRevEditor() {
   const tb = $("rev-rows");
   tb.innerHTML = "";
-  current.payload.revisions.forEach((r, i) => {
+  dsheet().revisions.forEach((r, i) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input value="" data-k="rev" style="width:36px"></td>
@@ -328,13 +378,13 @@ function renderRevEditor() {
     tr.querySelector('[data-k="by"]').value = r.by || "";
     tr.querySelectorAll("input").forEach((inp) =>
       inp.addEventListener("input", () => {
-        current.payload.revisions[i][inp.dataset.k] = inp.value;
+        dsheet().revisions[i][inp.dataset.k] = inp.value;
         markDirty();
         render();
       })
     );
     tr.querySelector("[data-del]").addEventListener("click", () => {
-      current.payload.revisions.splice(i, 1);
+      dsheet().revisions.splice(i, 1);
       renderRevEditor();
       markDirty();
       render();
@@ -343,7 +393,7 @@ function renderRevEditor() {
   });
 }
 $("add-rev-btn").addEventListener("click", () => {
-  current.payload.revisions.push({
+  dsheet().revisions.push({
     rev: "", date: new Date().toISOString().slice(0, 10), description: "", by: "",
   });
   renderRevEditor();
@@ -375,10 +425,10 @@ document.querySelectorAll(".tool").forEach((b) =>
 $("delete-shape-btn").addEventListener("click", deleteSelected);
 function deleteSelected() {
   if (selectedId) {
-    current.payload.shapes = current.payload.shapes.filter((s) => s.id !== selectedId);
+    dsheet().shapes = dsheet().shapes.filter((s) => s.id !== selectedId);
     selectedId = null;
   } else if (selectedCid) {
-    current.payload.components = current.payload.components.filter((c) => c.id !== selectedCid);
+    dsheet().components = dsheet().components.filter((c) => c.id !== selectedCid);
     selectedCid = null;
     renderInspector();
   } else return;
@@ -395,7 +445,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 $("f-standard").addEventListener("change", () => {
-  current.payload.standard = $("f-standard").value;
+  dsheet().standard = $("f-standard").value;
   updateStdNote();
   renderInspector();
   render();
@@ -485,8 +535,8 @@ function sheetScale(p) {
 
 function newComponent(kind, cx, cy) {
   const def = CATALOG[kind];
-  const std = STANDARDS[current.payload.standard] || STANDARDS.Generic;
-  const k = sheetScale(current.payload);
+  const std = STANDARDS[dsheet().standard] || STANDARDS.Generic;
+  const k = sheetScale(dsheet());
   const w = +(def.w * k).toFixed(1);
   const h = +(def.h * k).toFixed(1);
   return {
@@ -904,7 +954,7 @@ function renderInspector() {
 }
 
 function reorderComponent(c, where) {
-  const arr = current.payload.components;
+  const arr = dsheet().components;
   const i = arr.indexOf(c);
   if (i === -1) return;
   arr.splice(i, 1);
@@ -928,7 +978,7 @@ async function saveCurrent() {
 }
 
 $("export-svg-btn").addEventListener("click", () => {
-  const svg = buildSvg(current.payload, { export: true });
+  const svg = buildSvg(dsheet(), { export: true });
   const blob = new Blob(
     ['<?xml version="1.0" encoding="UTF-8"?>\n' + svg.outerHTML],
     { type: "image/svg+xml" }
@@ -1003,13 +1053,15 @@ function buildSvg(p, opts = {}) {
   for (const c of p.components || []) compLayer.appendChild(componentNode(c, opts));
   svg.appendChild(compLayer);
 
-  // title block + revision table, bottom-right
-  const tbW = Math.min(180, fw * 0.55);
-  const tbH = 46;
-  const tbX = fx + fw - tbW;
-  const tbY = fy + fh - tbH;
-  drawRevisionTable(svg, p, tbX, tbY, tbW);
-  drawTitleBlock(svg, p, tbX, tbY, tbW, tbH);
+  // title block + revision table, bottom-right (scaled with the sheet)
+  const tbW = 180, tbH = 46;
+  const k = sheetScale(p);
+  const tbX = fx + fw - tbW * k;
+  const tbY = fy + fh - tbH * k;
+  const tg = el("g", { transform: `translate(${tbX} ${tbY}) scale(${k})` });
+  drawRevisionTable(tg, p, 0, 0, tbW);
+  drawTitleBlock(tg, p, 0, 0, tbW, tbH);
+  svg.appendChild(tg);
   return svg;
 }
 
@@ -1242,11 +1294,129 @@ function render() {
   if (!current) return;
   const host = $("sheet-host");
   host.innerHTML = "";
-  const svg = buildSvg(current.payload);
+  const a = aSheet();
+  if (a && a.type === "cover") {
+    host.appendChild(buildCover());
+    $("delete-shape-btn").disabled = true;
+    return;
+  }
+  const svg = buildSvg(dsheet());
   host.appendChild(svg);
   attachCanvasHandlers(svg);
   $("delete-shape-btn").disabled = !selectedId && !selectedCid;
 }
+
+function buildCover() {
+  const pl = current.payload;
+  const [W, H] = sheetDims(dsheet());
+  const svg = el("svg", { xmlns: SVGNS, viewBox: `0 0 ${W} ${H}`, width: `${W}mm`, height: `${H}mm` });
+  const k = Math.min(1100 / W, 760 / H, 4);
+  svg.setAttribute("width", `${Math.round(W * k)}`);
+  svg.setAttribute("height", `${Math.round(H * k)}`);
+  svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, fill: "#fff" }));
+  svg.appendChild(el("rect", { x: 12, y: 12, width: W - 24, height: H - 24, fill: "none", stroke: "#000", "stroke-width": 0.7 }));
+  const ds = pl.sheets.find((s) => s.type === "drawing");
+  const tb = ds ? ds.titleBlock : newTitleBlock();
+  if (tb.logo)
+    svg.appendChild(el("image", { href: tb.logo, x: W / 2 - 35, y: H * 0.12, width: 70, height: 24, preserveAspectRatio: "xMidYMid meet" }));
+  svg.appendChild(el("text", { x: W / 2, y: H * 0.30, "font-size": 11, "font-weight": 700, "text-anchor": "middle", "font-family": "sans-serif" }, pl.projectName || "Untitled project"));
+  if (tb.company)
+    svg.appendChild(el("text", { x: W / 2, y: H * 0.30 + 8, "font-size": 5, "text-anchor": "middle", "font-family": "sans-serif", fill: "#444" }, tb.company + (tb.noAbn || !tb.abn ? "" : `  ·  ABN ${tb.abn}`)));
+  // Drawing register / index
+  const ix = W * 0.18, iy = H * 0.42, iw = W * 0.64;
+  svg.appendChild(el("text", { x: ix, y: iy - 3, "font-size": 5, "font-weight": 700, "font-family": "sans-serif" }, "DRAWING REGISTER"));
+  const cols = [iw * 0.14, iw * 0.56, iw * 0.3];
+  const head = ["REF", "SHEET NAME", "TYPE"];
+  let hx = ix;
+  const rh = 8;
+  head.forEach((hh, i) => {
+    svg.appendChild(el("rect", { x: hx, y: iy, width: cols[i], height: rh, fill: "#eee", stroke: "#000", "stroke-width": 0.3 }));
+    svg.appendChild(el("text", { x: hx + 2, y: iy + 5.4, "font-size": 3.4, "font-weight": 700, "font-family": "sans-serif" }, hh));
+    hx += cols[i];
+  });
+  pl.sheets.forEach((s, r) => {
+    const ry = iy + rh * (r + 1);
+    let rx = ix;
+    const vals = [s.ref || "", s.name || "", s.type === "cover" ? "Cover" : "Drawing"];
+    cols.forEach((cw, i) => {
+      svg.appendChild(el("rect", { x: rx, y: ry, width: cw, height: rh, fill: "none", stroke: "#000", "stroke-width": 0.25 }));
+      svg.appendChild(el("text", { x: rx + 2, y: ry + 5.4, "font-size": 3.4, "font-family": "sans-serif" }, String(vals[i])));
+      rx += cw;
+    });
+  });
+  const tbRow = iy + rh * (pl.sheets.length + 1) + 4;
+  svg.appendChild(el("text", { x: ix, y: tbRow, "font-size": 3.2, "font-family": "sans-serif", fill: "#555" }, `Standard: ${ds ? ds.standard : "—"}   ·   Date: ${tb.date || ""}   ·   Rev: ${tb.revision || ""}`));
+  return svg;
+}
+
+function buildSheetTabs() {
+  const wrap = $("sheet-tabs");
+  wrap.innerHTML = "";
+  for (const s of current.payload.sheets) {
+    const b = document.createElement("button");
+    b.className = s.id === current.payload.activeSheetId ? "active" : "";
+    b.innerHTML = `${s.ref || ""} ${s.name || s.type} <span class="stype">${s.type}</span>`;
+    b.addEventListener("click", () => selectSheet(s.id));
+    wrap.appendChild(b);
+  }
+}
+
+function selectSheet(id) {
+  current.payload.activeSheetId = id;
+  selectedId = null;
+  selectedCid = null;
+  placeKind = null;
+  clearPaletteActive();
+  buildSheetTabs();
+  fillForm();
+  $("f-standard").value = dsheet().standard;
+  updateStdNote();
+  renderInspector();
+  if (activeView === "tables") renderTables();
+  else render();
+}
+
+function nextDrawingRef() {
+  let max = 0;
+  for (const s of current.payload.sheets) {
+    const n = parseInt(s.ref, 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return String(max + 1).padStart(3, "0");
+}
+
+$("add-sheet-btn").addEventListener("click", () => {
+  const n = current.payload.sheets.filter((s) => s.type === "drawing").length + 1;
+  const d = newDrawingSheet(`Drawing ${n}`, nextDrawingRef());
+  d.standard = dsheet().standard;
+  current.payload.sheets.push(d);
+  markDirty();
+  selectSheet(d.id);
+});
+
+$("rename-sheet-btn").addEventListener("click", () => {
+  const s = aSheet();
+  const name = prompt("Sheet name:", s.name || "");
+  if (name == null) return;
+  s.name = name.trim() || s.name;
+  const ref = prompt("Sheet reference:", s.ref || "");
+  if (ref != null) s.ref = ref.trim();
+  markDirty();
+  buildSheetTabs();
+  render();
+});
+
+$("del-sheet-btn").addEventListener("click", () => {
+  const s = aSheet();
+  if (s.type === "cover") return alert("The cover sheet can't be deleted.");
+  if (current.payload.sheets.filter((x) => x.type === "drawing").length <= 1)
+    return alert("At least one drawing sheet is required.");
+  if (!confirm(`Delete sheet "${s.name}"?`)) return;
+  current.payload.sheets = current.payload.sheets.filter((x) => x.id !== s.id);
+  current.payload.activeSheetId = current.payload.sheets.find((x) => x.type === "drawing").id;
+  markDirty();
+  selectSheet(current.payload.activeSheetId);
+});
 
 let activeView = "drawing";
 function showView(name) {
@@ -1378,7 +1548,7 @@ function highlightComponent(svg) {
   svg.querySelectorAll(".cmp-sel").forEach((n) => n.remove());
   if (!selectedCid) return;
   const g = svg.querySelector(`[data-cid="${selectedCid}"]`);
-  const c = current.payload.components.find((x) => x.id === selectedCid);
+  const c = dsheet().components.find((x) => x.id === selectedCid);
   if (!g || !c) return;
   g.appendChild(el("rect", {
     class: "cmp-sel", x: -2, y: -2, width: c.w + 4, height: c.h + 4,
@@ -1395,7 +1565,7 @@ function attachCanvasHandlers(svg) {
 
     if (tool === "place" && placeKind) {
       const c = newComponent(placeKind, x, y);
-      current.payload.components.push(c);
+      dsheet().components.push(c);
       selectedCid = c.id;
       selectedId = null;
       placeKind = null;
@@ -1412,7 +1582,7 @@ function attachCanvasHandlers(svg) {
       if (cg) {
         selectedCid = cg.dataset.cid;
         selectedId = null;
-        const c = current.payload.components.find((cc) => cc.id === selectedCid);
+        const c = dsheet().components.find((cc) => cc.id === selectedCid);
         moving = { cid: c.id, node: cg, start: { x, y }, origin: { x: c.x, y: c.y } };
         svg.setPointerCapture(e.pointerId);
         applySelectionHighlight(svg);
@@ -1424,7 +1594,7 @@ function attachCanvasHandlers(svg) {
       if (id) {
         selectedId = id;
         selectedCid = null;
-        const s = current.payload.shapes.find((sh) => sh.id === id);
+        const s = dsheet().shapes.find((sh) => sh.id === id);
         moving = { id, node: e.target, start: { x, y }, origin: JSON.parse(JSON.stringify(s)) };
         svg.setPointerCapture(e.pointerId);
       } else {
@@ -1439,7 +1609,7 @@ function attachCanvasHandlers(svg) {
     if (tool === "text") {
       const text = prompt("Text:");
       if (text) {
-        current.payload.shapes.push({ id: uid(), type: "text", x, y, text, size: 5 });
+        dsheet().shapes.push({ id: uid(), type: "text", x, y, text, size: 5 });
         markDirty();
         render();
       }
@@ -1454,13 +1624,13 @@ function attachCanvasHandlers(svg) {
       const { x, y } = svgPoint(svg, e);
       const dx = x - moving.start.x, dy = y - moving.start.y;
       if (moving.cid) {
-        const c = current.payload.components.find((cc) => cc.id === moving.cid);
+        const c = dsheet().components.find((cc) => cc.id === moving.cid);
         c.x = moving.origin.x + dx;
         c.y = moving.origin.y + dy;
         moving.node.setAttribute("transform", `translate(${c.x} ${c.y})`);
         return;
       }
-      const s = current.payload.shapes.find((sh) => sh.id === moving.id);
+      const s = dsheet().shapes.find((sh) => sh.id === moving.id);
       const o = moving.origin;
       const n = moving.node;
       if (s.type === "line") {
@@ -1493,7 +1663,7 @@ function attachCanvasHandlers(svg) {
     const old = svg.querySelector("#__draft");
     if (old) old.remove();
     if (s) {
-      current.payload.shapes.push(s);
+      dsheet().shapes.push(s);
       markDirty();
       render();
     }
