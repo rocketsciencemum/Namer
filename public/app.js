@@ -620,10 +620,22 @@ function assess(c) {
       break;
     }
     case "splice":
-    case "tray":
+    case "tray": {
       if (s.splice?.method)
         msgs.push(`Must be ${s.splice.method}; splice loss ≤ ${s.splice.maxLossDb} dB (≤ ${s.splice.maxAvg1550Db} dB avg @1550).`);
+      if (c.kind === "splice" && s.splice?.approved?.length) {
+        const m = s.splice.approved.find((a) => (a.partNo || a.model) === p.partNo || a.model === p.equipment);
+        if (m) {
+          msgs.push(`${m.model} — ${m.note}`);
+          const fc = parseInt(p.fibreCount, 10);
+          if (Number.isFinite(fc) && fc > m.maxSingleFusion)
+            down("red", `${fc} cores exceed ${m.model} single-fusion capacity (${m.maxSingleFusion}).`);
+        } else if (p.partNo) {
+          down("yellow", `Closure ${p.partNo} not in the approved list — verify capacity/seal rating.`);
+        }
+      }
       break;
+    }
     case "pit":
     case "demarc": {
       const ap = s.pit.approved?.find((a) => a.name === p.pitSize);
@@ -659,6 +671,11 @@ function equipmentOptions(kind) {
     return (s.ftp.approved || []).map((a) => ({
       label: `${a.partNo} — ${a.supplier} ${a.ports}P`,
       apply: (p) => { p.partNo = a.partNo; p.fibreCount = a.ports; p.connector = s.connector.required; p.polish = s.connector.requiredPolish; },
+    }));
+  if (kind === "splice")
+    return (s.splice?.approved || []).map((a) => ({
+      label: `${a.model} — ≤${a.maxSingleFusion} single-fusion`,
+      apply: (p) => { p.partNo = a.partNo || a.model; p.equipment = a.model; },
     }));
   if (kind === "pit" || kind === "demarc")
     return (s.pit.approved || []).map((a) => ({

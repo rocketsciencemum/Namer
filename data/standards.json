@@ -33,7 +33,17 @@
           { "supplier": "AFL", "ports": 96, "partNo": "RF-4CQ4QR-BD-8S-Z" }
         ]
       },
-      "splice": { "method": "fusion", "maxLossDb": 0.05, "maxAvg1550Db": 0.10, "jointPit": "8 Pit" },
+      "splice": {
+        "method": "fusion",
+        "maxLossDb": 0.05,
+        "maxAvg1550Db": 0.10,
+        "jointPit": "8 Pit",
+        "approved": [
+          { "model": "AFL Apex X-1", "partNo": "", "maxSingleFusion": 144, "note": "Compact sealed closure (GR-771); small distribution/branch joint." },
+          { "model": "AFL Apex X-2S", "partNo": "AX-2S-B-L-1-2-2-X", "maxSingleFusion": 216, "note": "Sealed gel-wedge closure (GR-771); mid distribution joint." },
+          { "model": "AFL Apex X-2", "partNo": "AX-2-B-L-1-2-2-X", "maxSingleFusion": 432, "note": "Sealed gel-wedge closure (GR-771); main feeder/boundary joint in the 8 Pit." }
+        ]
+      },
       "pit": {
         "approved": [
           { "name": "P8", "dims": "1370x615x880", "partNo": "124040", "role": "8 Pit (joint / through)" },
