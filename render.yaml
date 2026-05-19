@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: namer-engineering-drawing
+    runtime: node
+    plan: free
+    branch: claude/engineering-drawing-app-1l7cr
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
