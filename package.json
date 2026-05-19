@@ -1,0 +1,20 @@
+{
+  "name": "namer-engineering-drawing-app",
+  "version": "1.0.0",
+  "description": "Engineering drawing wrapper app: login, ABN lookup, title block, revision log, SVG/PDF export",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  }
+}

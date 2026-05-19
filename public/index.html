@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Namer · Engineering Drawing App</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- AUTH VIEW -->
+    <section id="view-auth" class="view auth-view">
+      <div class="auth-card">
+        <h1>Namer</h1>
+        <p class="sub">Engineering drawing wrapper &amp; revision control</p>
+        <div class="tabs">
+          <button class="tab active" data-tab="login">Log in</button>
+          <button class="tab" data-tab="register">Create account</button>
+        </div>
+        <form id="auth-form">
+          <label>Username<input name="username" autocomplete="username" required /></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+          <p class="err" id="auth-err" hidden></p>
+          <button type="submit" class="primary" id="auth-submit">Log in</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- DASHBOARD VIEW -->
+    <section id="view-dash" class="view" hidden>
+      <header class="topbar">
+        <strong>Namer</strong>
+        <span class="spacer"></span>
+        <span id="dash-user" class="muted"></span>
+        <button id="logout-btn" class="ghost">Log out</button>
+      </header>
+      <main class="dash">
+        <div class="dash-head">
+          <h2>Your drawings</h2>
+          <button id="new-drawing-btn" class="primary">+ New drawing</button>
+        </div>
+        <ul id="drawing-list" class="drawing-list"></ul>
+        <p id="dash-empty" class="muted" hidden>No drawings yet. Create one to get started.</p>
+      </main>
+    </section>
+
+    <!-- EDITOR VIEW -->
+    <section id="view-editor" class="view" hidden>
+      <header class="topbar">
+        <button id="back-btn" class="ghost">&larr; Drawings</button>
+        <strong id="editor-title">Drawing</strong>
+        <span class="spacer"></span>
+        <span id="save-state" class="muted"></span>
+        <button id="save-btn" class="primary">Save</button>
+        <button id="export-svg-btn" class="ghost">Export SVG</button>
+        <button id="export-pdf-btn" class="ghost">Print / PDF</button>
+      </header>
+      <div class="editor">
+        <aside class="panel">
+          <details open>
+            <summary>Sheet</summary>
+            <label>Size
+              <select id="f-sheet">
+                <option value="A4">A4</option>
+                <option value="A3" selected>A3</option>
+                <option value="A2">A2</option>
+                <option value="A1">A1</option>
+                <option value="A0">A0</option>
+              </select>
+            </label>
+            <label>Orientation
+              <select id="f-orientation">
+                <option value="landscape" selected>Landscape</option>
+                <option value="portrait">Portrait</option>
+              </select>
+            </label>
+          </details>
+
+          <details open>
+            <summary>Company / ABN</summary>
+            <label>ABN
+              <input id="f-abn" list="abn-samples" placeholder="11 digits" />
+            </label>
+            <datalist id="abn-samples"></datalist>
+            <button id="abn-lookup-btn" class="ghost small">Look up ABN</button>
+            <p class="err" id="abn-err" hidden></p>
+            <label>Company<input id="f-company" /></label>
+            <label>Address<input id="f-address" /></label>
+            <label>Logo
+              <input id="f-logo" type="file" accept="image/png,image/jpeg,image/svg+xml" />
+            </label>
+            <div class="logo-preview" id="logo-preview" hidden>
+              <img id="logo-img" alt="logo preview" />
+              <button id="logo-clear-btn" class="ghost small">Remove logo</button>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Title block</summary>
+            <label>Drawing title<input id="f-title" /></label>
+            <label>Drawing number<input id="f-number" /></label>
+            <div class="row">
+              <label>Rev<input id="f-rev" /></label>
+              <label>Scale<input id="f-scale" placeholder="1:1" /></label>
+            </div>
+            <div class="row">
+              <label>Units<input id="f-units" placeholder="mm" /></label>
+              <label>Projection
+                <select id="f-projection">
+                  <option value="Third angle" selected>Third angle</option>
+                  <option value="First angle">First angle</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Sheet<input id="f-sheetno" type="number" min="1" value="1" /></label>
+              <label>of<input id="f-sheetof" type="number" min="1" value="1" /></label>
+            </div>
+            <label>Date<input id="f-date" type="date" /></label>
+            <div class="row">
+              <label>Drawn by<input id="f-drawn" /></label>
+              <label>Checked<input id="f-checked" /></label>
+            </div>
+            <label>Approved by<input id="f-approved" /></label>
+          </details>
+
+          <details open>
+            <summary>Revision log</summary>
+            <table class="rev-edit">
+              <thead>
+                <tr><th>Rev</th><th>Date</th><th>Description</th><th>By</th><th></th></tr>
+              </thead>
+              <tbody id="rev-rows"></tbody>
+            </table>
+            <button id="add-rev-btn" class="ghost small">+ Add revision</button>
+          </details>
+
+          <details open>
+            <summary>Drawing tools</summary>
+            <div class="tools" id="tools">
+              <button class="tool active" data-tool="select">Select</button>
+              <button class="tool" data-tool="line">Line</button>
+              <button class="tool" data-tool="rect">Rect</button>
+              <button class="tool" data-tool="circle">Circle</button>
+              <button class="tool" data-tool="text">Text</button>
+            </div>
+            <button id="delete-shape-btn" class="ghost small" disabled>Delete selected</button>
+            <p class="muted tiny">Draw inside the framed area. Click a shape with Select to move/delete it.</p>
+          </details>
+        </aside>
+
+        <div class="canvas-wrap" id="canvas-wrap">
+          <div id="sheet-host"></div>
+        </div>
+      </div>
+    </section>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
