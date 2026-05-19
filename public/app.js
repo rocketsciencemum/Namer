@@ -266,8 +266,10 @@ async function openEditor(id) {
   activeView = "drawing";
   $("canvas-wrap").hidden = false;
   $("tables-wrap").hidden = true;
+  $("checks-wrap").hidden = true;
   $("tab-drawing").classList.add("active");
   $("tab-tables").classList.remove("active");
+  $("tab-checks").classList.remove("active");
   render();
 }
 
@@ -563,6 +565,32 @@ function newLink(kind, aId, bId) {
       : { ref: "", conduitDia: "100mm", material: "HDPE", lengthM: 50, conduitDepthMm: 450, conduitLocation: "Footpath" };
   return { id: uid(), kind, aId, bId, label: kind === "cable" ? "Cable run" : "Conduit run", props, io: [] };
 }
+// Which component kinds a run type may connect.
+const CONNECT_RULES = {
+  cable: ["rack", "patch", "splice", "tray", "demarc"],
+  conduit: ["rack", "pit", "demarc", "conduit"],
+};
+function linkAllows(linkKind, compKind) {
+  return (CONNECT_RULES[linkKind] || []).includes(compKind);
+}
+function validTargets(linkKind, excludeId) {
+  return dsheet().components.filter(
+    (c) => c.id !== excludeId && linkAllows(linkKind, c.kind)
+  );
+}
+
+function nearestValidComponent(linkKind, x, y, excludeId) {
+  let best = null;
+  let bestD = Infinity;
+  const radius = 22 * sheetScale(dsheet());
+  for (const c of validTargets(linkKind, excludeId)) {
+    const p = compCentre(c);
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best && bestD <= radius ? best : null;
+}
+
 function compById(id) {
   return dsheet().components.find((c) => c.id === id) || null;
 }
@@ -1359,6 +1387,15 @@ function componentNode(c, opts) {
   if (!opts.export) {
     g.dataset.cid = c.id;
     g.style.cursor = tool === "select" ? "move" : "default";
+    if (tool === "link" && linkKind && c.id !== pendingA) {
+      const ok = linkAllows(linkKind, c.kind);
+      if (ok)
+        add(g, "rect", {
+          x: -2, y: -2, width: c.w + 4, height: c.h + 4, fill: "none",
+          stroke: "#16a34a", "stroke-width": 0.6, "stroke-dasharray": "2 1.5",
+        });
+      else g.setAttribute("opacity", "0.35");
+    }
     if (c.id === selectedCid)
       add(g, "rect", {
         class: "cmp-sel", x: -2, y: -2, width: c.w + 4, height: c.h + 4,
@@ -1576,6 +1613,7 @@ function selectSheet(id) {
   updateStdNote();
   renderInspector();
   if (activeView === "tables") renderTables();
+  else if (activeView === "checks") renderChecks();
   else render();
 }
 
@@ -1624,16 +1662,182 @@ $("del-sheet-btn").addEventListener("click", () => {
 let activeView = "drawing";
 function showView(name) {
   activeView = name;
-  const draw = name === "drawing";
-  $("canvas-wrap").hidden = !draw;
-  $("tables-wrap").hidden = draw;
-  $("tab-drawing").classList.toggle("active", draw);
-  $("tab-tables").classList.toggle("active", !draw);
-  if (draw) render();
-  else renderTables();
+  $("canvas-wrap").hidden = name !== "drawing";
+  $("tables-wrap").hidden = name !== "tables";
+  $("checks-wrap").hidden = name !== "checks";
+  $("tab-drawing").classList.toggle("active", name === "drawing");
+  $("tab-tables").classList.toggle("active", name === "tables");
+  $("tab-checks").classList.toggle("active", name === "checks");
+  if (name === "drawing") render();
+  else if (name === "tables") renderTables();
+  else renderChecks();
 }
 $("tab-drawing").addEventListener("click", () => showView("drawing"));
 $("tab-tables").addEventListener("click", () => showView("tables"));
+$("tab-checks").addEventListener("click", () => showView("checks"));
+
+// ---------- Validation ----------
+function fibreAtten() {
+  const s = curStd();
+  return (s && s.fibre && s.fibre.maxAttenuation1550) || 0.21;
+}
+function spliceLoss() {
+  const s = curStd();
+  return (s && s.splice && s.splice.maxLossDb) || 0.1;
+}
+function cableRunLoss(lk) {
+  const len = parseFloat(lk.props.lengthM) || 0;
+  return (len / 1000) * fibreAtten();
+}
+
+// BFS over cable links; returns path of component ids or null.
+function findPath(ds, fromId, isGoal) {
+  const adj = {};
+  for (const lk of ds.links) {
+    if (lk.kind !== "cable") continue;
+    (adj[lk.aId] = adj[lk.aId] || []).push(lk.bId);
+    (adj[lk.bId] = adj[lk.bId] || []).push(lk.aId);
+  }
+  const q = [[fromId]];
+  const seen = new Set([fromId]);
+  while (q.length) {
+    const path = q.shift();
+    const last = path[path.length - 1];
+    if (isGoal(last) && path.length > 0) return path;
+    for (const n of adj[last] || []) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      q.push([...path, n]);
+    }
+  }
+  return null;
+}
+
+function validateSheet(ds) {
+  const out = { Completeness: [], Labels: [], Continuity: [], Feasibility: [] };
+  const add = (grp, level, msg) => out[grp].push({ level, msg });
+  const comps = ds.components || [];
+  const links = ds.links || [];
+  const byKind = (k) => comps.filter((c) => c.kind === k);
+
+  // Completeness
+  if (!current.payload.projectName?.trim()) add("Completeness", "warn", "Project name is empty.");
+  const tb = ds.titleBlock || {};
+  if (!tb.drawingNumber?.trim()) add("Completeness", "warn", `Sheet "${ds.name}": drawing number is blank.`);
+  if (!tb.revision?.trim()) add("Completeness", "warn", `Sheet "${ds.name}": revision is blank.`);
+  if (!tb.date) add("Completeness", "warn", `Sheet "${ds.name}": date is blank.`);
+  const racks = byKind("rack");
+  const demarcs = byKind("demarc");
+  racks.length ? add("Completeness", "pass", `${racks.length} rack/ODF present.`)
+    : add("Completeness", "fail", "No rack/ODF — the customer end is missing.");
+  demarcs.length ? add("Completeness", "pass", `${demarcs.length} demarcation point present.`)
+    : add("Completeness", "fail", "No demarcation point — the ISP boundary is missing.");
+  const cableRuns = links.filter((l) => l.kind === "cable");
+  cableRuns.length ? add("Completeness", "pass", `${cableRuns.length} cable run(s).`)
+    : add("Completeness", "warn", "No cable runs drawn.");
+
+  // Labels
+  let labelIssues = 0;
+  for (const c of comps) {
+    const lf = labelFmtFor(c.kind);
+    if (!lf || !lf.format) continue;
+    if (!c.props.ref) { add("Labels", "warn", `${c.label || c.kind} has no reference (expected ${lf.format}).`); labelIssues++; }
+    else if (lf.regex && !new RegExp(lf.regex).test(c.props.ref)) {
+      add("Labels", "fail", `${c.label || c.kind} ref "${c.props.ref}" ≠ ${lf.format}.`); labelIssues++;
+    }
+  }
+  if (!labelIssues) add("Labels", "pass", "All standardised labels present and well-formed.");
+
+  // Continuity
+  const opticalKinds = ["rack", "patch", "splice", "tray", "demarc"];
+  for (const c of comps.filter((x) => opticalKinds.includes(x.kind))) {
+    const linked = links.some((l) => l.aId === c.id || l.bId === c.id);
+    if (!linked) add("Continuity", "warn", `${c.label || CATALOG[c.kind].name} is not connected to any run.`);
+  }
+  if (racks.length && demarcs.length) {
+    const demarcSet = new Set(demarcs.map((d) => d.id));
+    let path = null;
+    for (const r of racks) {
+      path = findPath(ds, r.id, (id) => demarcSet.has(id));
+      if (path) break;
+    }
+    if (path) {
+      const names = path.map((id) => compById(id)?.label || id).join(" → ");
+      add("Continuity", "pass", `Continuous cable path: ${names}.`);
+      // Feasibility — loss budget along that path
+      let loss = 0;
+      const segs = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        const lk = links.find(
+          (l) => l.kind === "cable" &&
+            ((l.aId === path[i] && l.bId === path[i + 1]) || (l.bId === path[i] && l.aId === path[i + 1]))
+        );
+        if (lk) { const sl = cableRunLoss(lk); loss += sl; segs.push(`${(parseFloat(lk.props.lengthM) || 0)} m`); }
+        const mid = compById(path[i + 1]);
+        if (mid && (mid.kind === "splice" || mid.kind === "tray")) loss += spliceLoss();
+      }
+      loss += 0.3 * 2; // assumed mated connector pair at each terminating end
+      const txt = `Estimated end-to-end loss ≈ ${loss.toFixed(2)} dB (cable @ ${fibreAtten()} dB/km + splices ${spliceLoss()} dB + 2× connector 0.3 dB).`;
+      if (loss > 5) add("Feasibility", "fail", txt + " Exceeds a typical 5 dB ceiling.");
+      else if (loss > 3) add("Feasibility", "warn", txt + " Above a 3 dB guideline — confirm against agreed budget.");
+      else add("Feasibility", "pass", txt);
+    } else {
+      add("Continuity", "fail", "No continuous cable path from a rack/ODF to a demarcation point.");
+    }
+  }
+
+  // Feasibility — per-run + standards compliance
+  for (const lk of cableRuns) {
+    if (!lk.props.lengthM) add("Feasibility", "warn", `${lk.label}: length not set — loss can't be estimated.`);
+    const r = assess({ kind: lk.kind, props: lk.props });
+    if (r.status === "red") add("Feasibility", "fail", `${lk.label}: ${r.messages[0]}`);
+  }
+  for (const c of comps) {
+    const r = assess(c);
+    if (r.status === "red") add("Feasibility", "fail", `${c.label || CATALOG[c.kind].name}: ${r.messages.find((m) => /exceed|not permitted|below|multimode/i.test(m)) || r.messages[0]}`);
+  }
+  if (!out.Feasibility.length) add("Feasibility", "pass", "No technical feasibility issues detected.");
+
+  return out;
+}
+
+function renderChecks() {
+  const host = $("checks-host");
+  host.innerHTML = "";
+  const ds = current ? dsheet() : null;
+  if (!ds) { host.textContent = "No drawing sheet."; return; }
+  const res = validateSheet(ds);
+  let fails = 0, warns = 0, passes = 0;
+  for (const g of Object.values(res))
+    for (const it of g) (it.level === "fail" ? fails++ : it.level === "warn" ? warns++ : passes++);
+
+  const sum = document.createElement("p");
+  sum.className = "check-summary";
+  sum.textContent = `Sheet "${ds.name}" — ${fails} fail · ${warns} warning · ${passes} ok`;
+  host.appendChild(sum);
+
+  for (const [grp, items] of Object.entries(res)) {
+    if (!items.length) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "check-group";
+    const h = document.createElement("h3");
+    h.textContent = grp;
+    wrap.appendChild(h);
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "check " + it.level;
+      const ic = document.createElement("span");
+      ic.className = "ic";
+      ic.textContent = it.level === "pass" ? "✓" : it.level === "warn" ? "⚠" : "✗";
+      const tx = document.createElement("span");
+      tx.textContent = it.msg;
+      row.appendChild(ic);
+      row.appendChild(tx);
+      wrap.appendChild(row);
+    }
+    host.appendChild(wrap);
+  }
+}
 
 function ioBlock(host, ent) {
   // ent: { id, title, status, meta, entity, defCount, aDef, bDef }
@@ -1819,19 +2023,30 @@ function attachCanvasHandlers(svg) {
 
     if (tool === "link" && linkKind) {
       const cg = e.target.closest && e.target.closest("[data-cid]");
-      if (!cg) return;
-      const cid = cg.dataset.cid;
-      if (!pendingA) {
-        pendingA = cid;
-        selectedCid = cid;
-        selectedId = selectedLid = null;
-        $("link-hint").textContent = "Now click the SECOND component…";
-        applySelectionHighlight(svg);
-        highlightComponent(svg);
+      let comp = cg ? compById(cg.dataset.cid) : null;
+      if (!comp || !linkAllows(linkKind, comp.kind)) {
+        const snapped = nearestValidComponent(linkKind, x, y, pendingA);
+        if (snapped) comp = snapped;
+      }
+      if (!comp) {
+        $("link-hint").textContent = `No valid ${linkKind} endpoint near here.`;
         return;
       }
-      if (cid === pendingA) return;
-      const lk = newLink(linkKind, pendingA, cid);
+      if (!linkAllows(linkKind, comp.kind)) {
+        $("link-hint").textContent =
+          `A ${linkKind} run can't connect to ${CATALOG[comp.kind].name}. Valid: ${CONNECT_RULES[linkKind].map((k) => CATALOG[k].name).join(", ")}.`;
+        return;
+      }
+      if (!pendingA) {
+        pendingA = comp.id;
+        selectedCid = comp.id;
+        selectedId = selectedLid = null;
+        $("link-hint").textContent = "Now click the SECOND component (valid ones are outlined green)…";
+        render();
+        return;
+      }
+      if (comp.id === pendingA) return;
+      const lk = newLink(linkKind, pendingA, comp.id);
       dsheet().links.push(lk);
       pendingA = null;
       linkKind = null;

@@ -142,6 +142,19 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .label-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
 .label-hint.bad { color: var(--danger); }
 
+#checks-host { max-width: 900px; margin: 0 auto; }
+.check-group { margin-bottom: 20px; }
+.check-group h3 { margin: 0 0 8px; font-size: 15px; }
+.check { display: flex; gap: 10px; padding: 7px 10px; border: 1px solid #ddd; border-left-width: 4px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; background: #fafafa; }
+.check.pass { border-left-color: #16a34a; }
+.check.warn { border-left-color: #eab308; }
+.check.fail { border-left-color: #dc2626; }
+.check .ic { font-weight: 700; }
+.check.pass .ic { color: #16a34a; }
+.check.warn .ic { color: #b45309; }
+.check.fail .ic { color: #dc2626; }
+.check-summary { font-size: 14px; font-weight: 600; margin: 4px 0 16px; }
+
 .sheet-tabs { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .sheet-tabs button {
   text-align: left; background: var(--panel-2); color: var(--text);
@@ -185,6 +198,7 @@ table.io input:focus { outline: 1px solid var(--primary); }
   #sheet-host { box-shadow: none; }
   #sheet-host svg { width: 100%; height: auto; }
   .tables-wrap:not([hidden]) { display: block; padding: 0; overflow: visible; }
+  #checks-wrap:not([hidden]) { display: block; padding: 0; overflow: visible; }
   table.io input { border: 0; }
   @page { margin: 8mm; }
 }
