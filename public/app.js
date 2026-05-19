@@ -157,6 +157,25 @@ $("new-drawing-btn").addEventListener("click", async () => {
 });
 $("back-btn").addEventListener("click", openDashboard);
 
+// ---------- Bulk pit type ----------
+$("bulkpit-btn").addEventListener("click", () => {
+  if (!current) return;
+  const v = $("f-bulkpit").value;
+  const ds = dsheet();
+  const pits = ds.components.filter((c) => c.kind === "pit");
+  if (!pits.length) return alert("No pits on this sheet.");
+  if (!confirm(`Set all ${pits.length} pit(s) to ${v}?`)) return;
+  for (const c of pits) {
+    c.props.pitSize = v;
+    c.props.lidQty = v === "P8" ? 2 : 1;
+  }
+  markDirty();
+  renderInspector();
+  if (activeView === "tables") renderTables();
+  else if (activeView === "checks") renderChecks();
+  else render();
+});
+
 // ---------- Network wizard ----------
 $("wizard-btn").addEventListener("click", openWizard);
 
@@ -191,6 +210,10 @@ function openWizard() {
   const pitSpace = document.createElement("input");
   pitSpace.type = "number"; pitSpace.min = "10"; pitSpace.value = "200";
   mkF("Pit spacing (m)", pitSpace);
+  const haulPit = document.createElement("select");
+  haulPit.innerHTML = ["P1", "P2", "P3", "P4", "P5", "P6", "P8", "P9", "P10", "FP-PIT", "JP-PIT"]
+    .map((p) => `<option${p === "P5" ? " selected" : ""}>${p}</option>`).join("");
+  mkF("Hauling pit type", haulPit);
 
   const actions = document.createElement("div");
   actions.className = "insp-actions";
@@ -203,6 +226,7 @@ function openWizard() {
       spareVal: Math.max(0, parseFloat(spareVal.value) || 0),
       routeLengthM: Math.max(1, parseFloat(routeLen.value) || 1),
       pitSpacingM: Math.max(10, parseFloat(pitSpace.value) || 200),
+      haulPit: haulPit.value,
     };
     if (dsheet().components.length &&
         !confirm("Replace the components and runs on this sheet with the generated network?"))
@@ -271,8 +295,8 @@ function generateNetwork(o) {
   const pits = [];
   for (let i = 0; i < nPits; i++)
     pits.push(mk("pit", xAt(1 + i), baseY,
-      { pitSize: "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 1, ref: ref("APL-PT-") },
-      `Pit P5`));
+      { pitSize: o.haulPit || "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: (o.haulPit === "P8" ? 2 : 1), ref: ref("APL-PT-") },
+      `Pit ${o.haulPit || "P5"}`));
 
   // Joint pit (P8) + Apex closure
   const jointPit = mk("pit", xAt(civilN - 2), baseY,
