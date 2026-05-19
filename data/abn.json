@@ -2,26 +2,15 @@
   "_comment": "Mock Australian Business Register dataset for offline demo. Not real ABR data.",
   "businesses": [
     {
-      "abn": "51824753556",
-      "entityName": "COMMONWEALTH SCIENTIFIC AND INDUSTRIAL RESEARCH ORGANISATION",
-      "tradingName": "CSIRO",
-      "entityType": "Other Incorporated Entity",
-      "status": "Active",
-      "gstRegistered": true,
-      "stateCode": "ACT",
-      "postcode": "2601",
-      "address": "Clunies Ross St, Black Mountain ACT 2601"
-    },
-    {
-      "abn": "83914571673",
-      "entityName": "SKA OBSERVATORY AUSTRALIA PTY LTD",
-      "tradingName": "SKAO Australia",
+      "abn": "82647219534",
+      "entityName": "STARSITE PTY LTD",
+      "tradingName": "Starsite",
       "entityType": "Australian Private Company",
       "status": "Active",
       "gstRegistered": true,
       "stateCode": "WA",
-      "postcode": "6151",
-      "address": "Level 2, 26 Dick Perry Ave, Kensington WA 6151"
+      "postcode": "6000",
+      "address": "Perth WA 6000"
     },
     {
       "abn": "11004085616",

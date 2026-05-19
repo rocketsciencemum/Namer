@@ -1,0 +1,91 @@
+{
+  "_comment": "Equipment & compliance rulesets. AARNet rules transcribed from 'AARNet Installation Standards v1.16.1 (8 Jul 2024)'. NBN ruleset is indicative only and must be verified against current nbn published standards.",
+  "standards": {
+    "AARNet": {
+      "source": "AARNet Installation Standards v1.16.1 (8 Jul 2024)",
+      "unverified": false,
+      "fibre": {
+        "requiredType": "OS2 (G.652.D)",
+        "maxAttenuation1550": 0.21,
+        "jacketColour": "Blue",
+        "approvedCounts": [48, 96, 144, 360],
+        "approvedCables": [
+          { "partNo": "F360SMFTNX26", "cores": 360, "construction": "Flextube", "diaMm": 14.8, "use": "duct" },
+          { "partNo": "F144SLTNX26", "cores": 144, "construction": "Smartcore", "diaMm": 13.6, "use": "duct" },
+          { "partNo": "F96SLTNX26", "cores": 96, "construction": "Smartcore", "diaMm": 10.7, "use": "duct" },
+          { "partNo": "F48SLTNX26", "cores": 48, "construction": "Smartcore", "diaMm": 10.0, "use": "duct" },
+          { "partNo": "F144SLTHNX26", "cores": 144, "construction": "HSE", "diaMm": 23.0, "use": "direct-buried" }
+        ]
+      },
+      "connector": {
+        "required": "SC",
+        "requiredPolish": "APC",
+        "note": "Single-mode connectors must be SCA (SC/APC), factory-installed only (s7.6)."
+      },
+      "ftp": {
+        "sizes": [24, 48, 96],
+        "approved": [
+          { "supplier": "CommScope", "ports": 24, "partNo": "7-1154145-2" },
+          { "supplier": "CommScope", "ports": 48, "partNo": "7-1154145-4" },
+          { "supplier": "CommScope", "ports": 96, "partNo": "7-1154145-5" },
+          { "supplier": "AFL", "ports": 24, "partNo": "RB-1CQ1QR-BA-2S-Z" },
+          { "supplier": "AFL", "ports": 48, "partNo": "RD-2CQ2QR-BB-4S-Z" },
+          { "supplier": "AFL", "ports": 96, "partNo": "RF-4CQ4QR-BD-8S-Z" }
+        ]
+      },
+      "splice": { "method": "fusion", "maxLossDb": 0.05, "maxAvg1550Db": 0.10, "jointPit": "8 Pit" },
+      "pit": {
+        "approved": [
+          { "name": "P8", "dims": "1370x615x880", "partNo": "124040", "role": "8 Pit (joint / through)" },
+          { "name": "P5", "dims": "700x445x540", "partNo": "124030", "role": "5 Pit (access / hauling)" }
+        ],
+        "accepted": ["P5", "P8", "P6"]
+      },
+      "labels": {
+        "pit": { "format": "APL-PT-NNNNNNNN", "regex": "^APL-PT-\\d{8}$" },
+        "ftp": { "format": "APL-TP-XXXXXXXX", "regex": "^APL-TP-.{8}$" },
+        "cable": { "note": "Jacket marked in metres; in-pit & in-rack labels per s8.1." }
+      }
+    },
+    "NBN": {
+      "source": "Indicative NBN/FTTP conventions — NOT from an authoritative document",
+      "unverified": true,
+      "fibre": {
+        "requiredType": "OS2 (G.657.A1)",
+        "maxAttenuation1550": 0.25,
+        "jacketColour": "",
+        "approvedCounts": [12, 24, 48, 72, 96, 144, 288],
+        "approvedCables": []
+      },
+      "connector": {
+        "required": "SC",
+        "requiredPolish": "APC",
+        "note": "NBN FTTP typically SC/APC; confirm against current nbn build standards."
+      },
+      "ftp": { "sizes": [12, 24, 48, 96], "approved": [] },
+      "splice": { "method": "fusion", "maxLossDb": 0.1, "maxAvg1550Db": 0.15, "jointPit": "Joint pit" },
+      "pit": { "approved": [], "accepted": ["FP-PIT", "JP-PIT", "P1", "P2", "P3", "P4", "P5", "P6"] },
+      "labels": {
+        "pit": { "format": "", "regex": "" },
+        "ftp": { "format": "", "regex": "" },
+        "cable": { "note": "Confirm labelling against current nbn standards." }
+      }
+    },
+    "Generic": {
+      "source": "Lenient generic single-mode best practice",
+      "unverified": false,
+      "fibre": {
+        "requiredType": "OS2 (G.652.D)",
+        "maxAttenuation1550": 0.35,
+        "jacketColour": "",
+        "approvedCounts": [2, 4, 6, 8, 12, 24, 48, 72, 96, 144, 288, 360],
+        "approvedCables": []
+      },
+      "connector": { "required": "", "requiredPolish": "", "note": "Any factory-terminated connector acceptable." },
+      "ftp": { "sizes": [12, 24, 48, 96], "approved": [] },
+      "splice": { "method": "fusion", "maxLossDb": 0.15, "maxAvg1550Db": 0.2, "jointPit": "" },
+      "pit": { "approved": [], "accepted": [] },
+      "labels": { "pit": { "format": "", "regex": "" }, "ftp": { "format": "", "regex": "" }, "cable": { "note": "" } }
+    }
+  }
+}

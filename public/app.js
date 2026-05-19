@@ -58,10 +58,21 @@ $("logout-btn").addEventListener("click", async () => {
   location.reload();
 });
 
+let STD = {};
+async function loadStandards() {
+  try {
+    const { standards } = await api.get("/api/standards");
+    STD = standards || {};
+  } catch {
+    STD = {};
+  }
+}
+
 async function enterApp() {
-  const { user } = await api.get("/api/me");
-  $("dash-user").textContent = user.username;
+  await api.get("/api/me");
+  $("dash-user").textContent = "";
   await loadAbnSamples();
+  await loadStandards();
   await openDashboard();
 }
 
@@ -196,6 +207,7 @@ async function openEditor(id) {
   fillForm();
   buildPalette();
   $("f-standard").value = current.payload.standard;
+  updateStdNote();
   renderInspector();
   render();
 }
@@ -374,13 +386,26 @@ document.addEventListener("keydown", (e) => {
 
 $("f-standard").addEventListener("change", () => {
   current.payload.standard = $("f-standard").value;
+  updateStdNote();
+  renderInspector();
+  render();
   markDirty();
 });
 
+function updateStdNote() {
+  const name = current?.payload.standard;
+  const s = STD[name];
+  const note = $("std-note");
+  if (!s) { note.textContent = ""; return; }
+  note.textContent =
+    (s.unverified ? "⚠ Indicative only — verify. " : "") + "Source: " + s.source;
+  note.className = "tiny " + (s.unverified ? "label-hint bad" : "muted");
+}
+
 // ---------- Fibre component catalog ----------
 const STANDARDS = {
-  AARNet: { fibreType: "OS2 (G.652.D)", polish: "APC", connector: "LC", fibreCount: 12 },
-  NBN: { fibreType: "OS2 (G.657.A1)", polish: "APC", connector: "LC", fibreCount: 24 },
+  AARNet: { fibreType: "OS2 (G.652.D)", polish: "APC", connector: "SC", fibreCount: 48 },
+  NBN: { fibreType: "OS2 (G.657.A1)", polish: "APC", connector: "SC", fibreCount: 24 },
   Generic: { fibreType: "OS2 (G.652.D)", polish: "UPC", connector: "LC", fibreCount: 12 },
 };
 const OPT = {
@@ -468,6 +493,123 @@ function specLine(c) {
   }
 }
 
+function curStd() {
+  return STD[current?.payload.standard] || null;
+}
+function labelFmtFor(kind) {
+  const s = curStd();
+  if (!s || !s.labels) return null;
+  if (kind === "pit" || kind === "demarc") return s.labels.pit;
+  if (kind === "patch") return s.labels.ftp;
+  return null;
+}
+const RANK = { green: 0, na: 0, yellow: 1, red: 2 };
+
+function assess(c) {
+  const s = curStd();
+  if (!s) return { status: "na", messages: ["No ruleset loaded."] };
+  const p = c.props;
+  const msgs = [];
+  let worst = "green";
+  const down = (lvl, m) => { msgs.push(m); if (RANK[lvl] > RANK[worst]) worst = lvl; };
+
+  const countCheck = (count) => {
+    if (count && s.fibre.approvedCounts?.length && !s.fibre.approvedCounts.includes(Number(count)))
+      down("yellow", `${count}F is not an approved core count (${s.fibre.approvedCounts.join("/")}) — verify.`);
+  };
+  const connCheck = (conn, pol) => {
+    if (s.connector.required && conn && conn !== s.connector.required)
+      down("yellow", `Connector ${conn} differs from required ${s.connector.required}/${s.connector.requiredPolish} — verify.`);
+    if (s.connector.requiredPolish && pol && pol !== s.connector.requiredPolish)
+      down("red", `${pol} polish not permitted; ${s.connector.requiredPolish} required.`);
+  };
+
+  switch (c.kind) {
+    case "cable": {
+      const type = p.fibreType;
+      if (s.fibre.requiredType && type && type !== s.fibre.requiredType) {
+        if (/OM\d/.test(type)) down("red", `${type} is multimode; ${s.fibre.requiredType} required.`);
+        else down("yellow", `${type} differs from required ${s.fibre.requiredType} — verify.`);
+      }
+      countCheck(p.fibreCount);
+      if (p.partNo && s.fibre.approvedCables?.length) {
+        const m = s.fibre.approvedCables.find((a) => a.partNo === p.partNo);
+        if (m) msgs.push(`Matched approved cable ${m.partNo} (${m.cores}F ${m.construction}, ${m.use}).`);
+        else down("yellow", `Part ${p.partNo} not in the approved cable list — verify.`);
+      }
+      break;
+    }
+    case "patch": {
+      connCheck(p.connector, p.polish);
+      if (s.ftp.sizes?.length && p.fibreCount && !s.ftp.sizes.includes(Number(p.fibreCount)))
+        down("yellow", `${p.fibreCount}-port is not a standard FTP size (${s.ftp.sizes.join("/")}).`);
+      if (p.partNo && s.ftp.approved?.length) {
+        const m = s.ftp.approved.find((a) => a.partNo === p.partNo);
+        if (m) msgs.push(`Matched approved FTP ${m.partNo} (${m.supplier}, ${m.ports} port).`);
+        else down("yellow", `FTP part ${p.partNo} not in approved supplier list — verify.`);
+      }
+      break;
+    }
+    case "connector":
+      connCheck(p.connector, p.polish);
+      break;
+    case "splice":
+    case "tray":
+      if (s.splice?.method)
+        msgs.push(`Must be ${s.splice.method}; splice loss ≤ ${s.splice.maxLossDb} dB (≤ ${s.splice.maxAvg1550Db} dB avg @1550).`);
+      break;
+    case "pit":
+    case "demarc": {
+      const ap = s.pit.approved?.find((a) => a.name === p.pitSize);
+      if (ap) msgs.push(`${ap.name} (${ap.dims} mm, part ${ap.partNo}) — ${ap.role}.`);
+      else if (s.pit.accepted?.length && p.pitSize && !s.pit.accepted.includes(p.pitSize))
+        down("yellow", `Pit ${p.pitSize} not in accepted set (${s.pit.accepted.join("/")}) — verify.`);
+      break;
+    }
+    default:
+      return { status: "na", messages: ["No compliance rule for this item."] };
+  }
+
+  const lf = labelFmtFor(c.kind);
+  if (lf && lf.regex && p.ref && !new RegExp(lf.regex).test(p.ref))
+    down("yellow", `Ref "${p.ref}" does not match required label format ${lf.format}.`);
+
+  if (s.unverified && worst === "green") worst = "yellow";
+  if (!msgs.length) msgs.push("Meets the selected standard.");
+  return { status: worst, messages: msgs };
+}
+
+function equipmentOptions(kind) {
+  const s = curStd();
+  if (!s) return [];
+  if (kind === "cable")
+    return (s.fibre.approvedCables || []).map((a) => ({
+      label: `${a.partNo} — ${a.cores}F ${a.construction}`,
+      apply: (p) => { p.partNo = a.partNo; p.fibreCount = a.cores; p.fibreType = s.fibre.requiredType; },
+    }));
+  if (kind === "patch")
+    return (s.ftp.approved || []).map((a) => ({
+      label: `${a.partNo} — ${a.supplier} ${a.ports}P`,
+      apply: (p) => { p.partNo = a.partNo; p.fibreCount = a.ports; p.connector = s.connector.required; p.polish = s.connector.requiredPolish; },
+    }));
+  if (kind === "pit" || kind === "demarc")
+    return (s.pit.approved || []).map((a) => ({
+      label: `${a.name} — ${a.dims} (part ${a.partNo})`,
+      apply: (p) => { p.pitSize = a.name; p.partNo = a.partNo; },
+    }));
+  return [];
+}
+
+function applyStandardRef(c) {
+  const lf = labelFmtFor(c.kind);
+  if (!lf || !lf.format) return;
+  const digits = String(c.props.ref || "").replace(/\D/g, "");
+  if (c.kind === "pit" || c.kind === "demarc")
+    c.props.ref = "APL-PT-" + digits.padStart(8, "0").slice(-8);
+  else if (c.kind === "patch")
+    c.props.ref = "APL-TP-" + (String(c.props.ref || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "00000000").padStart(8, "0").slice(-8);
+}
+
 function buildPalette() {
   const pal = $("palette");
   pal.innerHTML = "";
@@ -506,6 +648,51 @@ function renderInspector() {
     return l;
   };
   const onEdit = () => { markDirty(); render(); };
+  const refreshCompliance = () => {
+    const r = assess(c);
+    chip.className = "chip " + r.status;
+    chip.textContent =
+      { green: "✓ Meets standard", yellow: "⚠ Verify", red: "✗ Not compatible", na: "— No rule" }[r.status];
+    ul.innerHTML = "";
+    for (const m of r.messages) {
+      const li = document.createElement("li");
+      li.textContent = m;
+      ul.appendChild(li);
+    }
+  };
+
+  const chip = document.createElement("span");
+  body.appendChild(chip);
+  const ul = document.createElement("ul");
+  ul.className = "compliance-msgs";
+  body.appendChild(ul);
+
+  const eqOpts = equipmentOptions(c.kind);
+  if (eqOpts.length) {
+    const sel = document.createElement("select");
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = c.props.partNo ? `Current: ${c.props.partNo}` : "— pick approved equipment —";
+    sel.appendChild(blank);
+    eqOpts.forEach((o, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", () => {
+      const o = eqOpts[Number(sel.value)];
+      if (o) { o.apply(c.props); markDirty(); render(); renderInspector(); }
+    });
+    body.appendChild(mk("Equipment (approved)", sel));
+  }
+  if (c.props.partNo) {
+    const pn = document.createElement("p");
+    pn.className = "label-hint";
+    pn.textContent = "Part No: " + c.props.partNo;
+    body.appendChild(pn);
+  }
+  refreshCompliance();
 
   const labelInput = document.createElement("input");
   labelInput.value = c.label || "";
@@ -550,8 +737,17 @@ function renderInspector() {
       else if (key === "fibreCount") v = parseInt(v, 10);
       c.props[key] = v;
       onEdit();
+      refreshCompliance();
     });
     body.appendChild(mk(meta.label, inp));
+  }
+
+  const lf = labelFmtFor(c.kind);
+  if (lf && lf.format) {
+    const hint = document.createElement("p");
+    hint.className = "label-hint";
+    hint.textContent = `Required label format: ${lf.format}`;
+    body.appendChild(hint);
   }
 
   const actions = document.createElement("div");
@@ -563,6 +759,13 @@ function renderInspector() {
     btn.addEventListener("click", fn);
     return btn;
   };
+  if (lf && lf.format)
+    actions.appendChild(mkBtn("Apply standard ref", () => {
+      applyStandardRef(c);
+      markDirty();
+      render();
+      renderInspector();
+    }));
   actions.appendChild(mkBtn("Bring to front", () => reorderComponent(c, "front")));
   actions.appendChild(mkBtn("Send to back", () => reorderComponent(c, "back")));
   actions.appendChild(mkBtn("Delete", deleteSelected));
@@ -796,6 +999,13 @@ function componentNode(c, opts) {
   const spec = specLine(c);
   if (spec)
     add(g, "text", { x: c.w / 2, y: c.h + 6, "font-size": 2.3, "text-anchor": "middle", "font-family": "sans-serif", fill: "#555" }, spec);
+  if (c.props && c.props.ref)
+    add(g, "text", { x: c.w / 2, y: c.h + 9, "font-size": 2.3, "text-anchor": "middle", "font-family": "monospace", fill: "#000" }, c.props.ref);
+  const r = assess(c);
+  if (r.status !== "na") {
+    const col = { green: "#16a34a", yellow: "#eab308", red: "#dc2626" }[r.status];
+    add(g, "circle", { cx: c.w - 1, cy: 1, r: 1.6, fill: col, stroke: "#fff", "stroke-width": 0.3 });
+  }
   if (!opts.export) {
     g.dataset.cid = c.id;
     g.style.cursor = tool === "select" ? "move" : "default";
@@ -1085,9 +1295,5 @@ function uid() {
 
 // ---------- Boot ----------
 (async function boot() {
-  try {
-    await enterApp();
-  } catch {
-    show("auth");
-  }
+  await enterApp();
 })();

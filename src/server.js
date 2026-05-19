@@ -13,6 +13,9 @@ const ABR_GUID = process.env.ABR_GUID || "";
 const abnData = JSON.parse(
   readFileSync(join(__dirname, "..", "data", "abn.json"), "utf8")
 );
+const standardsData = JSON.parse(
+  readFileSync(join(__dirname, "..", "data", "standards.json"), "utf8")
+);
 
 // Calls the official ABR ABN Lookup JSON web service. The public service
 // returns only state + postcode (no street address) for privacy reasons.
@@ -50,8 +53,11 @@ app.use(
   })
 );
 
+// Auth is disabled for now: all requests run as a shared guest user.
+let GUEST_ID = (db.findUserByUsername("guest") || db.createUser({ username: "guest", passwordHash: "" })).id;
+
 function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ error: "Not authenticated" });
+  if (!req.session.userId) req.session.userId = GUEST_ID;
   next();
 }
 
@@ -123,6 +129,10 @@ app.get("/api/abn", requireAuth, (req, res) => {
       tradingName: b.tradingName,
     })),
   });
+});
+
+app.get("/api/standards", requireAuth, (req, res) => {
+  res.json({ standards: standardsData.standards });
 });
 
 // --- Drawings ---

@@ -129,6 +129,18 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 #insp-body .row label { flex: 1; }
 .insp-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .insp-kind { font-weight: 600; margin: 0 0 6px; }
+.chip {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: #06281a; margin: 2px 0 6px;
+}
+.chip.green { background: #22c55e; color: #052e16; }
+.chip.yellow { background: #facc15; color: #422006; }
+.chip.red { background: #ef4444; color: #fff; }
+.chip.na { background: var(--panel-2); color: var(--muted); }
+.compliance-msgs { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: var(--muted); }
+.compliance-msgs li { margin: 2px 0; }
+.label-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; }
+.label-hint.bad { color: var(--danger); }
 
 /* Print */
 @media print {
