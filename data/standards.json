@@ -81,6 +81,40 @@
         "cable": { "note": "Confirm labelling against current nbn standards." }
       }
     },
+    "SDMP": {
+      "source": "Commercial / Defence E&IG Spatial Data Management Plan v5.0 (26 Jun 2020) — Section 8 Communications Data + Section 2 General",
+      "unverified": false,
+      "appliesToSide": "customer",
+      "datum": { "default": "GDA2020", "accepted": ["GDA2020", "GDA94", "WGS84"], "vertical": "AHD" },
+      "units": "metric SI",
+      "accuracy": { "engineeringDetail": "±0.05 m", "min": "±2 m for GNSS-captured features" },
+      "fibre": {
+        "requiredType": "OS2 (G.652.D)",
+        "maxAttenuation1550": 0.25,
+        "approvedCounts": [],
+        "approvedCables": []
+      },
+      "connector": {
+        "required": "",
+        "requiredPolish": "",
+        "note": "Customer-side connector is project-specific; SDMP does not mandate type."
+      },
+      "ftp": { "sizes": [], "approved": [] },
+      "splice": { "method": "fusion", "maxLossDb": 0.1, "maxAvg1550Db": 0.15, "jointPit": "Project-specified" },
+      "pit": { "approved": [], "accepted": [] },
+      "labels": {
+        "pit": { "format": "P####", "regex": "^P\\d{4,}$" },
+        "ftp": { "format": "", "regex": "" },
+        "conduit": { "format": "#### (4-digit, leading zeros)", "regex": "^\\d{4,}$" },
+        "cable": { "format": "### (3-digit; splits: 001-001, 001-002, …)", "regex": "^\\d{3,}(-\\d{3,})*$" },
+        "cableNote": "Cables labelled at start, end, and at every pit in between (SDMP s8.7.3)."
+      },
+      "attributes": {
+        "pit": ["pitNo", "propertyEbi", "type", "lidMaterial", "size", "noLids", "padlocks", "keyNumber", "condition", "conduits", "depth", "gfisX", "gfisY", "lastInspected"],
+        "conduit": ["conduitNo", "type", "size", "from", "to", "opening", "percentFull", "shieldWire", "earthStake", "pullRope", "depth", "length"],
+        "cable": ["cableNo", "type", "size", "colour", "jointLocation", "joinType", "from", "to", "length", "owner", "condition", "secure", "fromCabinet", "toCabinet"]
+      }
+    },
     "Generic": {
       "source": "Lenient generic single-mode best practice",
       "unverified": false,

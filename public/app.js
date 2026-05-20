@@ -498,6 +498,10 @@ function defaultPayload() {
   const d = newDrawingSheet("Drawing 1", "001");
   return {
     projectName: "",
+    propertyEbi: "",
+    datum: "GDA2020",
+    mgaZone: "",
+    accuracyClass: "±0.05 m",
     activeSheetId: d.id,
     sheets: [
       { id: uid(), type: "cover", name: "Cover sheet", ref: "000" },
@@ -524,6 +528,10 @@ function migratePayload(pl) {
   }
   return {
     projectName: pl?.titleBlock?.title || "",
+    propertyEbi: pl?.propertyEbi || "",
+    datum: pl?.datum || "GDA2020",
+    mgaZone: pl?.mgaZone || "",
+    accuracyClass: pl?.accuracyClass || "±0.05 m",
     activeSheetId: d.id,
     sheets: [{ id: uid(), type: "cover", name: "Cover sheet", ref: "000" }, d],
   };
@@ -597,6 +605,10 @@ function fillForm() {
   const t = p.titleBlock;
   $("editor-title").textContent = current.title;
   $("f-project").value = current.payload.projectName || "";
+  $("f-propertyebi").value = current.payload.propertyEbi || "";
+  $("f-datum").value = current.payload.datum || "GDA2020";
+  $("f-mgazone").value = current.payload.mgaZone || "";
+  $("f-accuracy").value = current.payload.accuracyClass || "";
   $("f-discipline").value = p.discipline || "blank";
   $("f-sheet").value = p.sheet;
   $("f-orientation").value = p.orientation;
@@ -632,6 +644,10 @@ function syncFromForm() {
   if (!current) return;
   const p = dsheet();
   current.payload.projectName = $("f-project").value;
+  current.payload.propertyEbi = $("f-propertyebi").value;
+  current.payload.datum = $("f-datum").value;
+  current.payload.mgaZone = $("f-mgazone").value;
+  current.payload.accuracyClass = $("f-accuracy").value;
   p.sheet = $("f-sheet").value;
   p.orientation = $("f-orientation").value;
   for (const [el, key] of Object.entries(FORM_MAP)) {
@@ -648,6 +664,10 @@ function syncFromForm() {
 }
 $("f-noabn").addEventListener("change", syncFromForm);
 $("f-project").addEventListener("input", syncFromForm);
+$("f-propertyebi").addEventListener("input", syncFromForm);
+$("f-datum").addEventListener("change", syncFromForm);
+$("f-mgazone").addEventListener("input", syncFromForm);
+$("f-accuracy").addEventListener("input", syncFromForm);
 
 for (const elId of [
   "f-sheet", "f-orientation", "f-abn", "f-company", "f-address", "f-title",
@@ -840,6 +860,10 @@ const OPT = {
   lidType: ["Composite Class B", "Class A", "Class B", "Class D"],
   conduitLocation: ["Footpath", "Road shoulder", "Carriageway", "Other"],
   yesno: ["Yes", "No"],
+  lidMaterial: ["PVC", "Metal", "Concrete"],
+  openingType: ["Bell mouth", "Cut-off", "Reducer"],
+  side: ["customer", "isp"],
+  datum: ["GDA2020", "GDA94", "WGS84"],
 };
 const FIELD_META = {
   equipment: { label: "Equipment", type: "text" },
@@ -865,17 +889,36 @@ const FIELD_META = {
   markerTapeAboveMm: { label: "Tape clearance above conduit (mm)", type: "number" },
   tracerWire: { label: "Tracer wire", type: "select", opts: OPT.yesno },
   sandBeddingMm: { label: "Sand bedding (mm)", type: "number" },
+  excessCableM: { label: "Excess cable / loop (m)", type: "number" },
+  padlocks: { label: "Padlocks", type: "number" },
+  keyNumber: { label: "Key number", type: "text" },
+  lidMaterial: { label: "Lid material", type: "select", opts: OPT.lidMaterial },
+  lastInspected: { label: "Last inspected", type: "text" },
+  gfisX: { label: "Latitude", type: "text" },
+  gfisY: { label: "Longitude", type: "text" },
+  opening: { label: "Opening type", type: "select", opts: OPT.openingType },
+  percentFull: { label: "Conduit % full", type: "number" },
+  shieldWire: { label: "Shield wire", type: "select", opts: OPT.yesno },
+  earthStake: { label: "Earth stake", type: "select", opts: OPT.yesno },
+  pullRope: { label: "Pull rope", type: "select", opts: OPT.yesno },
+  owner: { label: "Owner", type: "text" },
+  secureLink: { label: "Secure", type: "select", opts: OPT.yesno },
+  fromCabinet: { label: "From cabinet", type: "text" },
+  toCabinet: { label: "To cabinet", type: "text" },
+  jointLocation: { label: "Joint location (pit ref)", type: "text" },
+  joinType: { label: "Joint type", type: "text" },
+  side: { label: "Side (customer/isp override)", type: "select", opts: OPT.side },
 };
 const KIND_FIELDS = {
   rack: ["equipment", "ref", "rackWidth", "rackRU"],
   patch: ["equipment", "ref", "connector", "polish", "fibreCount"],
   splice: ["equipment", "ref", "fibreCount"],
   tray: ["ref", "fibreCount"],
-  pit: ["pitSize", "ref", "pitMaterial", "lidType", "lidQty", "pitWeightKg", "sandBeddingMm"],
-  conduit: ["conduitDia", "material", "lengthM", "conduitDepthMm", "conduitLocation", "markerTape", "markerTapeWidthMm", "markerTapeAboveMm", "tracerWire", "ref"],
-  cable: ["fibreType", "fibreCount", "lengthM", "ref"],
+  pit: ["pitSize", "ref", "pitMaterial", "lidType", "lidMaterial", "lidQty", "padlocks", "keyNumber", "pitWeightKg", "sandBeddingMm", "excessCableM", "lastInspected", "gfisX", "gfisY", "side"],
+  conduit: ["conduitDia", "material", "lengthM", "conduitDepthMm", "conduitLocation", "opening", "percentFull", "shieldWire", "earthStake", "pullRope", "markerTape", "markerTapeWidthMm", "markerTapeAboveMm", "tracerWire", "ref"],
+  cable: ["fibreType", "fibreCount", "lengthM", "ref", "owner", "secureLink", "fromCabinet", "toCabinet", "jointLocation", "joinType"],
   connector: ["connector", "polish", "ref"],
-  demarc: ["ref", "equipment", "pitSize", "pitMaterial", "lidType", "lidQty", "pitWeightKg", "sandBeddingMm"],
+  demarc: ["ref", "equipment", "pitSize", "pitMaterial", "lidType", "lidMaterial", "lidQty", "padlocks", "keyNumber", "pitWeightKg", "sandBeddingMm", "excessCableM", "lastInspected", "gfisX", "gfisY"],
 };
 const CATALOG = {
   rack: { name: "User rack / ODF", w: 26, h: 40 },
@@ -1019,6 +1062,14 @@ function newComponent(kind, cx, cy) {
       markerTapeWidthMm: kind === "conduit" ? 100 : "",
       markerTapeAboveMm: kind === "conduit" ? 300 : "",
       tracerWire: kind === "conduit" ? "Yes" : "",
+      lidMaterial: kind === "pit" || kind === "demarc" ? "PVC" : "",
+      padlocks: kind === "pit" || kind === "demarc" ? 2 : "",
+      excessCableM: kind === "pit" || kind === "demarc"
+        ? (kind === "demarc" ? 20 : 40)
+        : "",
+      shieldWire: kind === "conduit" ? "No" : "",
+      earthStake: kind === "conduit" ? "No" : "",
+      pullRope: kind === "conduit" ? "Yes" : "",
       fibreType: std.fibreType,
       polish: std.polish,
       connector: std.connector,
@@ -1117,17 +1168,60 @@ function specLine(c) {
 function curStd() {
   return STD[dsheet()?.standard] || null;
 }
-function labelFmtFor(kind) {
-  const s = curStd();
+// Customer/ISP side of a component. Customer = pre-demarc (project/SDMP rules);
+// ISP = post-demarc inc. joint pits and splice closures (AARNet APL rules).
+function componentSide(c) {
+  if (c?.props?.side) return c.props.side;
+  switch (c.kind) {
+    case "rack":
+    case "patch":
+    case "tray":
+    case "connector":
+      return "customer";
+    case "splice":
+    case "demarc":
+      return "isp";
+    case "pit":
+      return c.props.pitSize === "P8" ? "isp" : "customer";
+    default:
+      return "customer";
+  }
+}
+function linkSide(lk) {
+  const a = compById(lk.aId);
+  const b = compById(lk.bId);
+  const sa = a ? componentSide(a) : "customer";
+  const sb = b ? componentSide(b) : "customer";
+  if (sa === sb) return sa;
+  return "transition";
+}
+// Resolve the standard ruleset for a given side. AU projects on AARNet
+// automatically use SDMP for customer-side components.
+function sideStd(side) {
+  const stdKey = dsheet()?.standard;
+  if (side === "customer" && stdKey === "AARNet" && STD.SDMP) return STD.SDMP;
+  return STD[stdKey] || null;
+}
+function entitySide(c) {
+  if (!c) return "isp";
+  if (c.kind && (c.aId || c.bId)) return linkSide(c); // a link
+  return componentSide(c);
+}
+
+function labelFmtFor(kind, side) {
+  const s = side ? sideStd(side) : curStd();
   if (!s || !s.labels) return null;
   if (kind === "pit" || kind === "demarc") return s.labels.pit;
   if (kind === "patch") return s.labels.ftp;
+  if (kind === "conduit") return s.labels.conduit || null;
+  if (kind === "cable") return s.labels.cable || null;
   return null;
 }
 const RANK = { green: 0, na: 0, yellow: 1, red: 2 };
 
 function assess(c) {
-  const s = curStd();
+  const side = entitySide(c);
+  const s = sideStd(side) || curStd();
   if (!s) return { status: "na", messages: ["No ruleset loaded."] };
   const p = c.props;
   const msgs = [];
@@ -1217,7 +1311,7 @@ function assess(c) {
       return { status: "na", messages: ["No compliance rule for this item."] };
   }
 
-  const lf = labelFmtFor(c.kind);
+  const lf = labelFmtFor(c.kind, entitySide(c));
   if (lf && lf.regex && p.ref && !new RegExp(lf.regex).test(p.ref))
     down("yellow", `Ref "${p.ref}" does not match required label format ${lf.format}.`);
 
@@ -1259,7 +1353,7 @@ function equipmentOptions(kind) {
 }
 
 function applyStandardRef(c) {
-  const lf = labelFmtFor(c.kind);
+  const lf = labelFmtFor(c.kind, entitySide(c));
   if (!lf || !lf.format) return;
   const digits = String(c.props.ref || "").replace(/\D/g, "");
   if (c.kind === "pit" || c.kind === "demarc")
@@ -1412,7 +1506,7 @@ function renderInspector() {
     body.appendChild(mk(meta.label, inp));
   }
 
-  const lf = labelFmtFor(c.kind);
+  const lf = labelFmtFor(c.kind, entitySide(c));
   if (lf && lf.format) {
     const hint = document.createElement("p");
     hint.className = "label-hint";
@@ -2042,6 +2136,7 @@ function buildCover() {
   });
   const tbRow = iy + rh * (pl.sheets.length + 1) + 4;
   svg.appendChild(el("text", { x: ix, y: tbRow, "font-size": 3.2, "font-family": "sans-serif", fill: "#555" }, `Standard: ${ds ? ds.standard : "—"}   ·   Date: ${tb.date || ""}   ·   Rev: ${tb.revision || ""}`));
+  svg.appendChild(el("text", { x: ix, y: tbRow + 4.5, "font-size": 3.2, "font-family": "sans-serif", fill: "#555" }, `Property EBI: ${pl.propertyEbi || "—"}   ·   Datum: ${pl.datum || "—"}${pl.mgaZone ? " / MGA " + pl.mgaZone : ""}   ·   Accuracy: ${pl.accuracyClass || "—"}`));
   return svg;
 }
 
@@ -2326,10 +2421,11 @@ function findPath(ds, fromId, isGoal) {
 }
 
 function validateSheet(ds) {
-  const out = { Completeness: [], Labels: [], Continuity: [], Feasibility: [] };
+  const out = { Completeness: [], Labels: [], Continuity: [], Feasibility: [], SDMP: [] };
   const add = (grp, level, msg) => out[grp].push({ level, msg });
   const comps = ds.components || [];
   const links = ds.links || [];
+  const pl = current.payload;
   const byKind = (k) => comps.filter((c) => c.kind === k);
 
   // Completeness
@@ -2351,7 +2447,7 @@ function validateSheet(ds) {
   // Labels
   let labelIssues = 0;
   for (const c of comps) {
-    const lf = labelFmtFor(c.kind);
+    const lf = labelFmtFor(c.kind, entitySide(c));
     if (!lf || !lf.format) continue;
     if (!c.props.ref) { add("Labels", "warn", `${c.label || c.kind} has no reference (expected ${lf.format}).`); labelIssues++; }
     else if (lf.regex && !new RegExp(lf.regex).test(c.props.ref)) {
@@ -2409,6 +2505,57 @@ function validateSheet(ds) {
     if (r.status === "red") add("Feasibility", "fail", `${c.label || CATALOG[c.kind].name}: ${r.messages.find((m) => /exceed|not permitted|below|multimode/i.test(m)) || r.messages[0]}`);
   }
   if (!out.Feasibility.length) add("Feasibility", "pass", "No technical feasibility issues detected.");
+
+  // ---- SDMP (customer-side overlay; project metadata + topology + excess cable) ----
+  if (pl.propertyEbi) add("SDMP", "pass", `Property EBI ${pl.propertyEbi} set.`);
+  else add("SDMP", "warn", "Property EBI not set (SDMP s5 title block requirement).");
+  if (pl.datum) add("SDMP", "pass", `Datum ${pl.datum}${pl.mgaZone ? " / MGA " + pl.mgaZone : ""}.`);
+  else add("SDMP", "warn", "Datum not set (SDMP s2.6 — GDA2020 recommended).");
+  if (!pl.accuracyClass) add("SDMP", "warn", "Accuracy class not stated (SDMP s2.9).");
+
+  // Side-specific label format checks (already partly covered in Labels; add for conduit/cable too)
+  for (const c of comps) {
+    const side = componentSide(c);
+    const lf = labelFmtFor(c.kind, side);
+    if (lf && lf.regex && c.props.ref && !new RegExp(lf.regex).test(c.props.ref))
+      add("SDMP", "fail", `${c.label || c.kind} (${side}) ref "${c.props.ref}" ≠ ${lf.format}.`);
+  }
+  for (const lk of links) {
+    const side = linkSide(lk);
+    const lf = labelFmtFor(lk.kind, side);
+    if (lf && lf.regex && lk.props.ref && !new RegExp(lf.regex).test(lk.props.ref))
+      add("SDMP", "fail", `${lk.label || lk.kind} run (${side}) ref "${lk.props.ref}" ≠ ${lf.format}.`);
+  }
+
+  // Cable-conduit threading: SDMP s8.7.4 — every cable should be associated with conduits it runs through.
+  const conduitLinks = links.filter((l) => l.kind === "conduit");
+  for (const cab of links.filter((l) => l.kind === "cable")) {
+    const a = compById(cab.aId), b = compById(cab.bId);
+    if (!a || !b) continue;
+    if ((a.kind === "rack" && b.kind === "patch") || (b.kind === "rack" && a.kind === "patch")) continue; // rack-tail
+    const threaded = conduitLinks.some(
+      (cd) => (cd.aId === cab.aId || cd.bId === cab.aId) && (cd.aId === cab.bId || cd.bId === cab.bId)
+    );
+    if (!threaded)
+      add("SDMP", "warn", `Cable "${cab.label || "Cable run"}" is not threaded through a conduit run (SDMP s8.7.4).`);
+  }
+
+  // Excess cable allowance per pit on path (AARNet B.2: 40 m through 8 Pit, 20 m at joint pit, 5 m at rack, 15 m at splice entry)
+  for (const cab of links.filter((l) => l.kind === "cable")) {
+    const a = compById(cab.aId), b = compById(cab.bId);
+    if (!a || !b) continue;
+    const len = parseFloat(cab.props.lengthM) || 0;
+    let need = len;
+    for (const ep of [a, b]) {
+      if (ep.kind === "pit" || ep.kind === "demarc") need += parseFloat(ep.props.excessCableM) || 0;
+      else if (ep.kind === "rack") need += 5;
+      else if (ep.kind === "splice") need += 15;
+    }
+    if (len > 0 && len < need - 1)
+      add("SDMP", "warn",
+        `${cab.label || "Cable"} length ${len} m does not include excess loop allowance (~${Math.round(need)} m incl. ${cab.props.lengthM ? "" : ""}pit/splice/rack loops).`);
+  }
+  if (!out.SDMP.length) add("SDMP", "pass", "SDMP overlay checks all pass.");
 
   return out;
 }

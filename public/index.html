@@ -64,6 +64,16 @@
           <details open>
             <summary>Project &amp; sheets</summary>
             <label>Project name<input id="f-project" placeholder="Project name" /></label>
+            <label>Property EBI<input id="f-propertyebi" placeholder="e.g. 0703" /></label>
+            <div class="row">
+              <label>Datum
+                <select id="f-datum">
+                  <option>GDA2020</option><option>GDA94</option><option>WGS84</option>
+                </select>
+              </label>
+              <label>MGA zone<input id="f-mgazone" placeholder="e.g. 50" /></label>
+            </div>
+            <label>Accuracy class<input id="f-accuracy" placeholder="±0.05 m" /></label>
             <div class="sheet-tabs" id="sheet-tabs"></div>
             <div class="insp-actions">
               <button id="add-sheet-btn" class="ghost small">+ Drawing sheet</button>
