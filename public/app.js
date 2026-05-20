@@ -248,6 +248,7 @@ function openWizard() {
 function generateNetwork(o) {
   const ds = dsheet();
   const s = curStd();
+  const disc = ds.discipline || "blank";
   const total = o.totalCores;
   const spare = Math.min(
     total,
@@ -256,15 +257,15 @@ function generateNetwork(o) {
   const working = Math.max(0, total - spare);
   const nPits = Math.max(0, Math.min(10, Math.ceil(o.routeLengthM / o.pitSpacingM) - 1));
 
+  if (disc === "template") {
+    alert("Template-only sheet — nothing to generate.");
+    return;
+  }
+
   const [W, H] = sheetDims(ds);
   const fx = 20, fw = W - 30;
   const baseY = 10 + (H - 20) * 0.52;
   const upY = baseY - 34 * sheetScale(ds);
-
-  // civil node x-positions: rack, hauling pits, joint pit, demarc
-  const civilN = 2 + nPits + 1;
-  const x0 = fx + fw * 0.07, x1 = fx + fw * 0.9;
-  const xAt = (i) => x0 + ((x1 - x0) * i) / (civilN - 1);
 
   ds.components = [];
   ds.links = [];
@@ -277,67 +278,152 @@ function generateNetwork(o) {
     ds.components.push(c);
     return c;
   };
+  const xRange = (n) => {
+    const x0 = fx + fw * 0.07, x1 = fx + fw * 0.9;
+    return (i) => x0 + ((x1 - x0) * i) / Math.max(1, n - 1);
+  };
 
-  // Rack + FTP at the start
-  const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack / ODF" }, "User rack / ODF");
-  const sizes = (s && s.ftp && s.ftp.sizes) || [24, 48, 96];
-  const ftpSize = sizes.find((z) => z >= working) || sizes[sizes.length - 1];
-  const ftpPart = s && s.ftp && (s.ftp.approved || []).find((a) => a.ports === ftpSize);
-  const patch = mk("patch", xAt(0), upY, {
-    fibreCount: ftpSize,
-    connector: s ? s.connector.required : "SC",
-    polish: s ? s.connector.requiredPolish : "APC",
-    partNo: ftpPart ? ftpPart.partNo : "",
-    ref: `APL-TP-${String(1).padStart(8, "0")}`,
-  }, `FTP ${ftpSize}P`);
+  let summary = "";
 
-  // Hauling pits (P5)
-  const pits = [];
-  for (let i = 0; i < nPits; i++)
-    pits.push(mk("pit", xAt(1 + i), baseY,
-      { pitSize: o.haulPit || "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: (o.haulPit === "P8" ? 2 : 1), ref: ref("APL-PT-") },
-      `Pit ${o.haulPit || "P5"}`));
+  if (disc === "civils") {
+    // Civils: rack → hauling pits → joint pit → demarc, conduit only.
+    const nodesN = 2 + nPits + 1;
+    const xAt = xRange(nodesN);
+    const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack / ODF" }, "User rack / ODF");
+    const pits = [];
+    for (let i = 0; i < nPits; i++)
+      pits.push(mk("pit", xAt(1 + i), baseY,
+        { pitSize: o.haulPit || "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: (o.haulPit === "P8" ? 2 : 1), ref: ref("APL-PT-") },
+        `Pit ${o.haulPit || "P5"}`));
+    const jointPit = mk("pit", xAt(nodesN - 2), baseY,
+      { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+      "Joint pit P8");
+    const demarc = mk("demarc", xAt(nodesN - 1), baseY,
+      { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+      "Demarcation");
+    const chain = [rack, ...pits, jointPit, demarc];
+    const segLen = +(o.routeLengthM / (chain.length - 1)).toFixed(1);
+    for (let i = 0; i < chain.length - 1; i++) {
+      const lk = newLink("conduit", chain[i].id, chain[i + 1].id);
+      Object.assign(lk.props, { conduitDia: "100mm", material: "HDPE", lengthM: segLen, conduitDepthMm: 450, conduitLocation: "Footpath" });
+      ds.links.push(lk);
+    }
+    summary = `Civils chain: ${nPits} hauling pit(s) + joint P8 + demarcation across ${o.routeLengthM} m.`;
 
-  // Joint pit (P8) + Apex closure
-  const jointPit = mk("pit", xAt(civilN - 2), baseY,
-    { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
-    "Joint pit P8");
-  const apex = s && s.splice && (s.splice.approved || [])
-    .slice().sort((a, b) => a.maxSingleFusion - b.maxSingleFusion)
-    .find((a) => a.maxSingleFusion >= total);
-  const splice = mk("splice", xAt(civilN - 2), upY,
-    { fibreCount: total, equipment: apex ? apex.model : "Splice closure", partNo: apex ? (apex.partNo || apex.model) : "" },
-    apex ? apex.model : "Splice closure");
+  } else if (disc === "equipment") {
+    // Passive optical: rack → FTP → splice (Apex) → demarc, cable only.
+    const xAt = xRange(4);
+    const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack / ODF" }, "User rack / ODF");
+    const sizes = (s && s.ftp && s.ftp.sizes) || [24, 48, 96];
+    const ftpSize = sizes.find((z) => z >= working) || sizes[sizes.length - 1];
+    const ftpPart = s && s.ftp && (s.ftp.approved || []).find((a) => a.ports === ftpSize);
+    const patch = mk("patch", xAt(1), baseY, {
+      fibreCount: ftpSize,
+      connector: s ? s.connector.required : "SC",
+      polish: s ? s.connector.requiredPolish : "APC",
+      partNo: ftpPart ? ftpPart.partNo : "",
+      ref: "APL-TP-00000001",
+    }, `FTP ${ftpSize}P`);
+    const apex = s && s.splice && (s.splice.approved || [])
+      .slice().sort((a, b) => a.maxSingleFusion - b.maxSingleFusion)
+      .find((a) => a.maxSingleFusion >= total);
+    const splice = mk("splice", xAt(2), baseY,
+      { fibreCount: total, equipment: apex ? apex.model : "Splice closure", partNo: apex ? (apex.partNo || apex.model) : "" },
+      apex ? apex.model : "Splice closure");
+    const demarc = mk("demarc", xAt(3), baseY,
+      { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+      "Demarcation");
+    const fType = s ? s.fibre.requiredType : "OS2 (G.652.D)";
+    const cablePart = s && s.fibre && (s.fibre.approvedCables || []).find((a) => a.cores === total);
+    const cp = (len) => ({ fibreType: fType, fibreCount: total, lengthM: len, partNo: cablePart ? cablePart.partNo : "" });
+    ds.links.push(Object.assign(newLink("cable", rack.id, patch.id), { props: cp(5), label: "Rack tail" }));
+    ds.links.push(Object.assign(newLink("cable", patch.id, splice.id), { props: cp(+(o.routeLengthM * 0.6).toFixed(1)), label: "Lead-in" }));
+    const feeder = newLink("cable", splice.id, demarc.id);
+    Object.assign(feeder, { props: cp(+(o.routeLengthM * 0.4).toFixed(1)), label: "Feeder" });
+    ds.links.push(feeder);
+    ensureIo(feeder, total);
+    feeder.io.forEach((row, i) => {
+      row.a = splice.props.ref || splice.label;
+      row.b = demarc.props.ref || demarc.label;
+      row.status = i < working ? "WORKING" : "SPARE";
+    });
+    summary = `Optical: rack + FTP ${ftpSize}P + ${apex ? apex.model : "splice"} + demarcation, ${total}F (${working} working / ${spare} spare).`;
 
-  // Demarcation
-  const demarc = mk("demarc", xAt(civilN - 1), baseY,
-    { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
-    "Demarcation");
+  } else if (disc === "active") {
+    // Active equipment placeholder — real active components are deferred.
+    const xAt = xRange(3);
+    const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack" }, "User rack");
+    const patch = mk("patch", xAt(1), baseY, {
+      fibreCount: 24,
+      connector: s ? s.connector.required : "SC",
+      polish: s ? s.connector.requiredPolish : "APC",
+      ref: "APL-TP-00000001",
+    }, "FTP / hand-off");
+    const conn = mk("connector", xAt(2), baseY, {
+      connector: s ? s.connector.required : "SC",
+      polish: s ? s.connector.requiredPolish : "APC",
+    }, "Active port");
+    const fType = s ? s.fibre.requiredType : "OS2 (G.652.D)";
+    const cp = (len) => ({ fibreType: fType, fibreCount: 2, lengthM: len });
+    ds.links.push(Object.assign(newLink("cable", rack.id, patch.id), { props: cp(2), label: "Rack tail" }));
+    ds.links.push(Object.assign(newLink("cable", patch.id, conn.id), { props: cp(2), label: "Patch lead" }));
+    summary = "Active layer placeholder: rack + FTP + active port. CPE/router/transceiver and the ISP PoP are still in the backlog.";
 
-  // Conduit civil chain
-  const civilChain = [rack, ...pits, jointPit, demarc];
-  const segLen = +(o.routeLengthM / (civilChain.length - 1)).toFixed(1);
-  for (let i = 0; i < civilChain.length - 1; i++) {
-    const lk = newLink("conduit", civilChain[i].id, civilChain[i + 1].id);
-    Object.assign(lk.props, { conduitDia: "100mm", material: "HDPE", lengthM: segLen, conduitDepthMm: 450, conduitLocation: "Footpath" });
-    ds.links.push(lk);
+  } else {
+    // Blank: full civils + optical chain (the previous behaviour).
+    const nodesN = 2 + nPits + 1;
+    const xAt = xRange(nodesN);
+    const rack = mk("rack", xAt(0), baseY, { ref: "ODF-1", equipment: "User rack / ODF" }, "User rack / ODF");
+    const sizes = (s && s.ftp && s.ftp.sizes) || [24, 48, 96];
+    const ftpSize = sizes.find((z) => z >= working) || sizes[sizes.length - 1];
+    const ftpPart = s && s.ftp && (s.ftp.approved || []).find((a) => a.ports === ftpSize);
+    const patch = mk("patch", xAt(0), upY, {
+      fibreCount: ftpSize,
+      connector: s ? s.connector.required : "SC",
+      polish: s ? s.connector.requiredPolish : "APC",
+      partNo: ftpPart ? ftpPart.partNo : "",
+      ref: "APL-TP-00000001",
+    }, `FTP ${ftpSize}P`);
+    const pits = [];
+    for (let i = 0; i < nPits; i++)
+      pits.push(mk("pit", xAt(1 + i), baseY,
+        { pitSize: o.haulPit || "P5", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: (o.haulPit === "P8" ? 2 : 1), ref: ref("APL-PT-") },
+        `Pit ${o.haulPit || "P5"}`));
+    const jointPit = mk("pit", xAt(nodesN - 2), baseY,
+      { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+      "Joint pit P8");
+    const apex = s && s.splice && (s.splice.approved || [])
+      .slice().sort((a, b) => a.maxSingleFusion - b.maxSingleFusion)
+      .find((a) => a.maxSingleFusion >= total);
+    const splice = mk("splice", xAt(nodesN - 2), upY,
+      { fibreCount: total, equipment: apex ? apex.model : "Splice closure", partNo: apex ? (apex.partNo || apex.model) : "" },
+      apex ? apex.model : "Splice closure");
+    const demarc = mk("demarc", xAt(nodesN - 1), baseY,
+      { pitSize: "P8", pitMaterial: "Plastic", lidType: "Composite Class B", lidQty: 2, ref: ref("APL-PT-") },
+      "Demarcation");
+    const civilChain = [rack, ...pits, jointPit, demarc];
+    const segLen = +(o.routeLengthM / (civilChain.length - 1)).toFixed(1);
+    for (let i = 0; i < civilChain.length - 1; i++) {
+      const lk = newLink("conduit", civilChain[i].id, civilChain[i + 1].id);
+      Object.assign(lk.props, { conduitDia: "100mm", material: "HDPE", lengthM: segLen, conduitDepthMm: 450, conduitLocation: "Footpath" });
+      ds.links.push(lk);
+    }
+    const fType = s ? s.fibre.requiredType : "OS2 (G.652.D)";
+    const cablePart = s && s.fibre && (s.fibre.approvedCables || []).find((a) => a.cores === total);
+    const cp = (len) => ({ fibreType: fType, fibreCount: total, lengthM: len, partNo: cablePart ? cablePart.partNo : "" });
+    ds.links.push(Object.assign(newLink("cable", rack.id, patch.id), { props: cp(5), label: "Rack tail" }));
+    ds.links.push(Object.assign(newLink("cable", patch.id, splice.id), { props: cp(+(o.routeLengthM * 0.6).toFixed(1)), label: "Lead-in" }));
+    const feeder = newLink("cable", splice.id, demarc.id);
+    Object.assign(feeder, { props: cp(+(o.routeLengthM * 0.4).toFixed(1)), label: "Feeder" });
+    ds.links.push(feeder);
+    ensureIo(feeder, total);
+    feeder.io.forEach((row, i) => {
+      row.a = splice.props.ref || splice.label;
+      row.b = demarc.props.ref || demarc.label;
+      row.status = i < working ? "WORKING" : "SPARE";
+    });
+    summary = `Full chain: ${nPits} hauling pit(s) + joint + ${apex ? apex.model : "splice"} + FTP ${ftpSize}P. ${total}F (${working} working / ${spare} spare).`;
   }
-
-  // Optical cable path: rack → FTP → splice → demarc
-  const fType = s ? s.fibre.requiredType : "OS2 (G.652.D)";
-  const cablePart = s && s.fibre && (s.fibre.approvedCables || []).find((a) => a.cores === total);
-  const cableProps = (len) => ({ fibreType: fType, fibreCount: total, lengthM: len, partNo: cablePart ? cablePart.partNo : "" });
-  const c1 = newLink("cable", rack.id, patch.id); Object.assign(c1.props, cableProps(5)); c1.label = "Rack tail"; ds.links.push(c1);
-  const c2 = newLink("cable", patch.id, splice.id); Object.assign(c2.props, cableProps(+(o.routeLengthM * 0.6).toFixed(1))); c2.label = "Lead-in"; ds.links.push(c2);
-  const feeder = newLink("cable", splice.id, demarc.id); Object.assign(feeder.props, cableProps(+(o.routeLengthM * 0.4).toFixed(1))); feeder.label = "Feeder"; ds.links.push(feeder);
-
-  // I/O on the feeder: working vs spare allocation
-  ensureIo(feeder, total);
-  feeder.io.forEach((row, i) => {
-    row.a = splice.props.ref || splice.label;
-    row.b = demarc.props.ref || demarc.label;
-    row.status = i < working ? "WORKING" : "SPARE";
-  });
 
   current.payload.projectName = current.payload.projectName ||
     `${total}F route (${working} working / ${spare} spare)`;
@@ -347,9 +433,7 @@ function generateNetwork(o) {
   buildSheetTabs();
   renderInspector();
   showView("drawing");
-  alert(`Generated: ${total} cores (${working} working / ${spare} spare), ${nPits} hauling pit(s), ` +
-    `${apex ? apex.model : "splice"}, FTP ${ftpSize}P. Route ${o.routeLengthM} m. ` +
-    `Open the Checks tab to validate.`);
+  alert(`Generated for "${DISCIPLINES[disc]?.name || disc}" sheet.\n\n${summary}\n\nOpen Checks to validate.`);
 }
 
 // ---------- ABN ----------
