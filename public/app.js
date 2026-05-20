@@ -839,6 +839,7 @@ const OPT = {
   pitMaterial: ["Plastic", "Concrete"],
   lidType: ["Composite Class B", "Class A", "Class B", "Class D"],
   conduitLocation: ["Footpath", "Road shoulder", "Carriageway", "Other"],
+  yesno: ["Yes", "No"],
 };
 const FIELD_META = {
   equipment: { label: "Equipment", type: "text" },
@@ -859,17 +860,22 @@ const FIELD_META = {
   pitWeightKg: { label: "Pit weight (kg)", type: "number" },
   conduitDepthMm: { label: "Min depth / cover (mm)", type: "number" },
   conduitLocation: { label: "Location", type: "select", opts: OPT.conduitLocation },
+  markerTape: { label: "Marker tape", type: "select", opts: OPT.yesno },
+  markerTapeWidthMm: { label: "Marker tape width (mm)", type: "number" },
+  markerTapeAboveMm: { label: "Tape clearance above conduit (mm)", type: "number" },
+  tracerWire: { label: "Tracer wire", type: "select", opts: OPT.yesno },
+  sandBeddingMm: { label: "Sand bedding (mm)", type: "number" },
 };
 const KIND_FIELDS = {
   rack: ["equipment", "ref", "rackWidth", "rackRU"],
   patch: ["equipment", "ref", "connector", "polish", "fibreCount"],
   splice: ["equipment", "ref", "fibreCount"],
   tray: ["ref", "fibreCount"],
-  pit: ["pitSize", "ref", "pitMaterial", "lidType", "lidQty", "pitWeightKg"],
-  conduit: ["conduitDia", "material", "lengthM", "conduitDepthMm", "conduitLocation", "ref"],
+  pit: ["pitSize", "ref", "pitMaterial", "lidType", "lidQty", "pitWeightKg", "sandBeddingMm"],
+  conduit: ["conduitDia", "material", "lengthM", "conduitDepthMm", "conduitLocation", "markerTape", "markerTapeWidthMm", "markerTapeAboveMm", "tracerWire", "ref"],
   cable: ["fibreType", "fibreCount", "lengthM", "ref"],
   connector: ["connector", "polish", "ref"],
-  demarc: ["ref", "equipment", "pitSize", "pitMaterial", "lidType", "lidQty", "pitWeightKg"],
+  demarc: ["ref", "equipment", "pitSize", "pitMaterial", "lidType", "lidQty", "pitWeightKg", "sandBeddingMm"],
 };
 const CATALOG = {
   rack: { name: "User rack / ODF", w: 26, h: 40 },
@@ -889,7 +895,7 @@ function newLink(kind, aId, bId) {
   const props =
     kind === "cable"
       ? { ref: "", fibreType: std.fibreType, fibreCount: std.fibreCount, lengthM: 50, partNo: "" }
-      : { ref: "", conduitDia: "100mm", material: "HDPE", lengthM: 50, conduitDepthMm: 450, conduitLocation: "Footpath" };
+      : { ref: "", conduitDia: "100mm", material: "HDPE", lengthM: 50, conduitDepthMm: 450, conduitLocation: "Footpath", markerTape: "Yes", markerTapeWidthMm: 100, markerTapeAboveMm: 300, tracerWire: "Yes" };
   return { id: uid(), kind, aId, bId, label: kind === "cable" ? "Cable run" : "Conduit run", props, io: [] };
 }
 // Which component kinds a run type may connect.
@@ -1007,7 +1013,12 @@ function newComponent(kind, cx, cy) {
       pitMaterial: "Plastic",
       lidType: "Composite Class B",
       lidQty: 2,
-      pitWeightKg: "",
+      pitWeightKg: kind === "pit" || kind === "demarc" ? (kind === "demarc" ? 45 : 12) : "",
+      sandBeddingMm: kind === "pit" || kind === "demarc" ? 150 : "",
+      markerTape: kind === "conduit" ? "Yes" : "",
+      markerTapeWidthMm: kind === "conduit" ? 100 : "",
+      markerTapeAboveMm: kind === "conduit" ? 300 : "",
+      tracerWire: kind === "conduit" ? "Yes" : "",
       fibreType: std.fibreType,
       polish: std.polish,
       connector: std.connector,
@@ -1060,6 +1071,31 @@ function ensureIo(c, count) {
   while (c.io.length < count) c.io.push({ a: "", b: "", status: "" });
   if (c.io.length > count) c.io.length = count;
   return c.io;
+}
+
+function pitDimsFor(pitSize) {
+  const s = curStd();
+  const m = s?.pit?.approved?.find((a) => a.name === pitSize);
+  return m ? m.dims : "";
+}
+function specLines(c) {
+  const p = c.props;
+  if (c.kind === "pit" || c.kind === "demarc") {
+    const first = `${p.pitSize || ""} · ${p.pitMaterial || ""}` +
+      (p.lidQty ? ` · ${p.lidQty}× ${p.lidType || "lid"}` : "");
+    const dims = pitDimsFor(p.pitSize);
+    const bits = [dims ? `${dims} mm` : "", p.pitWeightKg ? `${p.pitWeightKg} kg` : "", p.sandBeddingMm ? `${p.sandBeddingMm}mm sand` : ""]
+      .filter(Boolean);
+    return [first, bits.join(" · ")].filter(Boolean);
+  }
+  if (c.kind === "conduit") {
+    const first = `${p.conduitDia || ""} ${p.material || ""}` + (p.lengthM ? ` · ${p.lengthM} m` : "") + (p.conduitDepthMm ? ` · ${p.conduitDepthMm}mm cover` : "");
+    const extras = [];
+    if (p.markerTape === "Yes") extras.push(`tape ${p.markerTapeWidthMm || 100}mm @≥${p.markerTapeAboveMm || 300}mm`);
+    if (p.tracerWire === "Yes") extras.push("tracer wire");
+    return [first, extras.join(" · ")].filter(Boolean);
+  }
+  return [specLine(c)].filter(Boolean);
 }
 
 function specLine(c) {
@@ -1751,11 +1787,12 @@ function componentNode(c, opts) {
   (SYMBOL[c.kind] || SYMBOL.rack)(g, c.w, c.h, c);
   if (c.label)
     add(g, "text", { x: c.w / 2, y: c.h + 3.2, "font-size": 2.8, "font-weight": 600, "text-anchor": "middle", "font-family": "sans-serif" }, c.label);
-  const spec = specLine(c);
-  if (spec)
-    add(g, "text", { x: c.w / 2, y: c.h + 6, "font-size": 2.3, "text-anchor": "middle", "font-family": "sans-serif", fill: "#555" }, spec);
+  const lines = specLines(c);
+  lines.forEach((t, i) => {
+    add(g, "text", { x: c.w / 2, y: c.h + 6 + i * 3, "font-size": 2.3, "text-anchor": "middle", "font-family": "sans-serif", fill: "#555" }, t);
+  });
   if (c.props && c.props.ref)
-    add(g, "text", { x: c.w / 2, y: c.h + 9, "font-size": 2.3, "text-anchor": "middle", "font-family": "monospace", fill: "#000" }, c.props.ref);
+    add(g, "text", { x: c.w / 2, y: c.h + 6 + lines.length * 3, "font-size": 2.3, "text-anchor": "middle", "font-family": "monospace", fill: "#000" }, c.props.ref);
   const r = assess(c);
   if (r.status !== "na") {
     const col = { green: "#16a34a", yellow: "#eab308", red: "#dc2626" }[r.status];
