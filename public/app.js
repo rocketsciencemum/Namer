@@ -533,10 +533,10 @@ function aSheet() {
   const pl = current.payload;
   return pl.sheets.find((s) => s.id === pl.activeSheetId) || pl.sheets[0];
 }
-// Active sheet if it is a drawing, else the first drawing sheet.
+// Active sheet if it is a drawing or detail, else the first drawing sheet.
 function dsheet() {
   const a = aSheet();
-  if (a && a.type === "drawing") return a;
+  if (a && (a.type === "drawing" || a.type === "detail")) return a;
   return current.payload.sheets.find((s) => s.type === "drawing");
 }
 
@@ -564,7 +564,7 @@ async function openEditor(id) {
   current = drawing;
   current.payload = migratePayload(current.payload);
   for (const s of current.payload.sheets) {
-    if (s.type !== "drawing") continue;
+    if (s.type !== "drawing" && s.type !== "detail") continue;
     if (!Array.isArray(s.shapes)) s.shapes = [];
     if (!Array.isArray(s.components)) s.components = [];
     if (!Array.isArray(s.links)) s.links = [];
@@ -1271,6 +1271,7 @@ function applyStandardRef(c) {
 function buildPalette() {
   const pal = $("palette");
   pal.innerHTML = "";
+  if (aSheet()?.type !== "drawing") return;
   const disc = dsheet()?.discipline || "blank";
   const all = $("f-allcomp")?.checked;
   const allowed = DISCIPLINES[disc]?.kinds || [];
@@ -1440,6 +1441,16 @@ function renderInspector() {
     const t = document.getElementById("io-" + c.id);
     if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
   }));
+  if (c.kind === "pit" || c.kind === "demarc")
+    actions.appendChild(mkBtn("Detail sheet →", () => {
+      const existing = current.payload.sheets.find(
+        (s) => s.type === "detail" && s.subjectCid === c.id
+      );
+      const det = existing || makeDetailSheet(c);
+      markDirty();
+      buildSheetTabs();
+      selectSheet(det.id);
+    }));
   actions.appendChild(mkBtn("Bring to front", () => reorderComponent(c, "front")));
   actions.appendChild(mkBtn("Send to back", () => reorderComponent(c, "back")));
   actions.appendChild(mkBtn("Delete", deleteSelected));
@@ -1579,7 +1590,7 @@ async function saveCurrent() {
 }
 
 $("export-svg-btn").addEventListener("click", () => {
-  const svg = buildSvg(dsheet(), { export: true });
+  const svg = activeSvg({ export: true });
   const blob = new Blob(
     ['<?xml version="1.0" encoding="UTF-8"?>\n' + svg.outerHTML],
     { type: "image/svg+xml" }
@@ -1973,19 +1984,21 @@ function drawRevisionTable(svg, p, x, yBottom, w) {
 }
 
 // ---------- Render + interaction ----------
+function activeSvg(opts) {
+  const a = aSheet();
+  if (a && a.type === "cover") return buildCover();
+  if (a && a.type === "detail") return buildDetail(a, opts || {});
+  return buildSvg(dsheet(), opts || {});
+}
+
 function render() {
   if (!current) return;
   const host = $("sheet-host");
   host.innerHTML = "";
   const a = aSheet();
-  if (a && a.type === "cover") {
-    host.appendChild(buildCover());
-    $("delete-shape-btn").disabled = true;
-    return;
-  }
-  const svg = buildSvg(dsheet());
+  const svg = activeSvg();
   host.appendChild(svg);
-  attachCanvasHandlers(svg);
+  if (a && a.type === "drawing") attachCanvasHandlers(svg);
   $("delete-shape-btn").disabled = !selectedId && !selectedCid;
 }
 
@@ -2029,6 +2042,162 @@ function buildCover() {
   });
   const tbRow = iy + rh * (pl.sheets.length + 1) + 4;
   svg.appendChild(el("text", { x: ix, y: tbRow, "font-size": 3.2, "font-family": "sans-serif", fill: "#555" }, `Standard: ${ds ? ds.standard : "—"}   ·   Date: ${tb.date || ""}   ·   Rev: ${tb.revision || ""}`));
+  return svg;
+}
+
+// ---------- Pit detail sheet ----------
+function parseDims(s) {
+  if (!s) return null;
+  const m = String(s).match(/(\d+)\s*x\s*(\d+)\s*x\s*(\d+)/i);
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+
+function makeDetailSheet(c) {
+  const src = dsheet();
+  const detail = {
+    id: uid(),
+    type: "detail",
+    name: (c.label || "Pit") + " Detail",
+    ref: nextDrawingRef(),
+    discipline: "civils",
+    subjectSheetId: src.id,
+    subjectCid: c.id,
+    sheet: src.sheet,
+    orientation: src.orientation,
+    titleBlock: { ...newTitleBlock(), ...src.titleBlock },
+    revisions: JSON.parse(JSON.stringify(src.revisions || [])),
+    standard: src.standard,
+    shapes: [], components: [], links: [],
+    subject: {
+      pitSize: c.props.pitSize,
+      pitMaterial: c.props.pitMaterial,
+      lidType: c.props.lidType,
+      lidQty: c.props.lidQty,
+      pitWeightKg: c.props.pitWeightKg,
+      sandBeddingMm: c.props.sandBeddingMm,
+      ref: c.props.ref || c.label,
+      label: c.label || CATALOG[c.kind].name,
+      dims: pitDimsFor(c.props.pitSize) || "",
+    },
+  };
+  detail.titleBlock.title = detail.name;
+  detail.titleBlock.drawingNumber = detail.ref;
+  current.payload.sheets.push(detail);
+  return detail;
+}
+
+function drawDetailView(svg, title, x, y, w, h, longLabel, shortLabel) {
+  svg.appendChild(el("text", { x: x + w / 2, y: y - 2.5, "font-size": 3.4, "font-weight": 700, "text-anchor": "middle", "font-family": "sans-serif" }, title));
+  svg.appendChild(el("rect", { x, y, width: w, height: h, fill: "none", stroke: "#000", "stroke-width": 0.5 }));
+  // bottom dimension
+  const dy = y + h + 5;
+  svg.appendChild(el("line", { x1: x, y1: dy, x2: x + w, y2: dy, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("line", { x1: x, y1: dy - 1.6, x2: x, y2: dy + 1.6, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("line", { x1: x + w, y1: dy - 1.6, x2: x + w, y2: dy + 1.6, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("text", { x: x + w / 2, y: dy + 3, "font-size": 2.8, "text-anchor": "middle", "font-family": "sans-serif" }, longLabel));
+  // right dimension
+  const dx = x + w + 5;
+  svg.appendChild(el("line", { x1: dx, y1: y, x2: dx, y2: y + h, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("line", { x1: dx - 1.6, y1: y, x2: dx + 1.6, y2: y, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("line", { x1: dx - 1.6, y1: y + h, x2: dx + 1.6, y2: y + h, stroke: "#000", "stroke-width": 0.3 }));
+  svg.appendChild(el("text", { x: dx + 2, y: y + h / 2 + 1, "font-size": 2.8, "font-family": "sans-serif" }, shortLabel));
+}
+
+function buildDetail(sheet, opts) {
+  opts = opts || {};
+  const sub = sheet.subject || {};
+  const [L, W, D] = parseDims(sub.dims) || [1370, 615, 880]; // P8 fallback
+  const [SW, SH] = sheetDims(sheet);
+  const svg = el("svg", { xmlns: SVGNS, viewBox: `0 0 ${SW} ${SH}`, width: `${SW}mm`, height: `${SH}mm` });
+  if (!opts.export) {
+    const k = Math.min(1100 / SW, 760 / SH, 4);
+    svg.setAttribute("width", Math.round(SW * k));
+    svg.setAttribute("height", Math.round(SH * k));
+  }
+  svg.appendChild(el("rect", { x: 0, y: 0, width: SW, height: SH, fill: "#fff" }));
+  const m = { l: 20, t: 10, r: 10, b: 10 };
+  const fx = m.l, fy = m.t, fw = SW - m.l - m.r, fh = SH - m.t - m.b;
+  svg.appendChild(el("rect", { x: fx, y: fy, width: fw, height: fh, fill: "none", stroke: "#000", "stroke-width": 0.7 }));
+
+  // Title block bottom-right (scaled like drawing sheets)
+  const tbW = 180, tbH = 46;
+  const k = sheetScale(sheet);
+  const tbX = fx + fw - tbW * k;
+  const tbY = fy + fh - tbH * k;
+  const tg = el("g", { transform: `translate(${tbX} ${tbY}) scale(${k})` });
+  drawRevisionTable(tg, sheet, 0, 0, tbW);
+  drawTitleBlock(tg, sheet, 0, 0, tbW, tbH);
+  svg.appendChild(tg);
+
+  // Working area above title block
+  const wx = fx + 4, wy = fy + 4;
+  const ww = fw - 8, wh = fh - tbH * k - 8;
+
+  // Heading
+  svg.appendChild(el("text", { x: wx + ww / 2, y: wy + 7, "font-size": 6, "font-weight": 700, "text-anchor": "middle", "font-family": "sans-serif" },
+    `${sub.label || "Pit"} — DETAIL`));
+  svg.appendChild(el("text", { x: wx + ww / 2, y: wy + 12.5, "font-size": 3.2, "text-anchor": "middle", "font-family": "sans-serif", fill: "#555" },
+    `${sub.pitSize || ""}  ·  ${sub.pitMaterial || ""}  ·  ${sub.ref || ""}`));
+
+  // Compute view scale: three views side by side (Plan L×W, Elevation L×D, End W×D)
+  const gap = 22;
+  const totalLogicalW = L + L + W;
+  const maxLogicalH = Math.max(W, D);
+  const availW = ww - 16 - 2 * gap - 16; // headroom for dim labels (right of each view)
+  const headerH = 22;
+  const notesH = 78;
+  const availH = wh - headerH - notesH - 22;
+  let viewScale = Math.min(availW / totalLogicalW, availH / maxLogicalH);
+  if (!Number.isFinite(viewScale) || viewScale <= 0) viewScale = 0.05;
+  viewScale = Math.min(viewScale, 0.06); // cap so views stay legible
+  const scaleStr = `1:${Math.round(1 / viewScale)}`;
+
+  // Place views
+  let cx = wx + 4, cy = wy + headerH + 6;
+  drawDetailView(svg, "PLAN VIEW", cx, cy, L * viewScale, W * viewScale, `L=${L}`, `W=${W}`);
+  cx += L * viewScale + gap;
+  drawDetailView(svg, "ELEVATION VIEW", cx, cy, L * viewScale, D * viewScale, `L=${L}`, `D=${D}`);
+  cx += L * viewScale + gap;
+  drawDetailView(svg, "END VIEW", cx, cy, W * viewScale, D * viewScale, `W=${W}`, `D=${D}`);
+
+  // Scale note
+  svg.appendChild(el("text", { x: wx + ww - 4, y: wy + headerH + 4, "font-size": 3, "text-anchor": "end", "font-family": "sans-serif", fill: "#555" },
+    `Scale ${scaleStr} · all dims mm`));
+
+  // Notes panel
+  const nx = wx + 4, ny = wy + wh - notesH - 6;
+  svg.appendChild(el("rect", { x: nx, y: ny, width: ww * 0.6, height: notesH, fill: "none", stroke: "#000", "stroke-width": 0.4 }));
+  svg.appendChild(el("text", { x: nx + 2, y: ny + 5, "font-size": 3.4, "font-weight": 700, "font-family": "sans-serif" }, "NOTES"));
+  const concrete = (sub.pitMaterial || "").toLowerCase() === "concrete";
+  const notes = [
+    `Pit type: ${sub.pitSize || "—"}    Material: ${sub.pitMaterial || "—"}`,
+    `Lid: ${sub.lidQty || 1}× ${sub.lidType || "Composite Class B"}`,
+    `Weight: ${sub.pitWeightKg || "—"} kg`,
+    `Sand bedding: ${sub.sandBeddingMm || 150} mm around perimeter and under pit (per AARNet B.2).`,
+    concrete ? "Concrete grade: 40 MPa unless noted otherwise (AS 3600)." : "Polyethylene plastic — black; non-conductive.",
+    "Refer to manufacturer's precast / installation guide. All lifting points to be used when lifting.",
+    "Drawn in accordance with AS 1100 conventions. Do not scale.",
+  ];
+  notes.forEach((t, i) =>
+    svg.appendChild(el("text", { x: nx + 2, y: ny + 11 + i * 4.5, "font-size": 3, "font-family": "sans-serif" }, t)));
+
+  // Callouts panel
+  const cox = nx + ww * 0.62, coy = ny;
+  svg.appendChild(el("rect", { x: cox, y: coy, width: ww * 0.38, height: notesH, fill: "none", stroke: "#000", "stroke-width": 0.4 }));
+  svg.appendChild(el("text", { x: cox + 2, y: coy + 5, "font-size": 3.4, "font-weight": 700, "font-family": "sans-serif" }, "CALLOUTS"));
+  const callouts = [
+    "Lifting anchors at four corners",
+    "SCEC GMS steel cover",
+    "Mounting ferrules (4× 400 mm UNISTRUT)",
+    "Cast-in SCEC latch box (lockable)",
+    "Logo / nameplate recess",
+    "Checkered non-slip pattern on lid",
+    "50 mm drain",
+    "Cable knockouts: 2× large, 4× small",
+  ];
+  callouts.forEach((t, i) =>
+    svg.appendChild(el("text", { x: cox + 2, y: coy + 11 + i * 4.5, "font-size": 3, "font-family": "sans-serif" }, "• " + t)));
+
   return svg;
 }
 
